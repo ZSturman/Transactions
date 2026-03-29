@@ -76,7 +76,7 @@ Record payments, get email notifications, and approve or dispute transactions â€
 ### 1. Clone & Install
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/ZSturman/Transactions
 cd web
 npm install
 ```

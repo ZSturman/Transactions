@@ -5,7 +5,7 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { CURRENCIES } from "@/types";
-import { sendInviteEmail } from "@/lib/emailjs";
+import { sendInviteEmail } from "@/lib/email";
 import toast from "react-hot-toast";
 
 interface InviteFormProps {
@@ -53,8 +53,8 @@ export default function InviteForm({ onClose }: InviteFormProps) {
         to_email: normalizedEmail,
         to_name: normalizedEmail.split("@")[0],
         from_name: profile.displayName || user.email!,
-        subject: `${profile.displayName} invited you to PeerConnect`,
-        message: `Track a shared balance together on PeerConnect.`,
+        subject: `${profile.displayName} invited you to Transactions`,
+        message: `Track shared transactions and balances together on Transactions.`,
         action_url: window.location.origin,
       });
 

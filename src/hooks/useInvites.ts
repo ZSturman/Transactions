@@ -7,7 +7,9 @@ import {
   doc,
   updateDoc,
   getDoc,
+  addDoc,
   serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -68,6 +70,21 @@ export function useInvites() {
       status: "active",
       updatedAt: serverTimestamp(),
     });
+
+    // Create the pending transaction so the invitee can approve or dispute it
+    if (invite.pendingTransaction) {
+      const { amount, type, description, date } = invite.pendingTransaction;
+      await addDoc(collection(db, "pairs", invite.pairId, "transactions"), {
+        pairId: invite.pairId,
+        amount,
+        type,
+        description,
+        createdBy: invite.fromUid,
+        status: "pending",
+        date: Timestamp.fromDate(new Date(date + "T12:00:00")),
+        createdAt: serverTimestamp(),
+      });
+    }
   }
 
   return { pendingInvites, loading, acceptInvite };

@@ -3,8 +3,8 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PeerConnect — Balance Tracker",
-  description: "Track shared balances with anyone. Record payments, approve or dispute transactions in real time.",
+  title: "Transactions",
+  description: "Track shared transactions with anyone. Record payments, settle debts, and manage balances in real time.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🤝 PeerConnect — Balance Tracker
+# 💸 Transactions
 
-**A real-time web app for two people to track shared money balances.**
+**A real-time web app for tracking shared transactions and balances with anyone.**
 
 Record payments, get email notifications, and approve or dispute transactions — all synced instantly.
 
@@ -90,7 +90,7 @@ npm install
 
 1. Go to the [Firebase Console](https://console.firebase.google.com/)
 2. Click **"Create a project"** (or use an existing one)
-3. Give it a name (e.g., `peerconnect`) and follow the prompts
+3. Give it a name (e.g., `transactions`) and follow the prompts
 4. Disable Google Analytics if you don't need it (or keep it enabled)
 
 #### Enable Authentication
@@ -124,7 +124,7 @@ Firestore requires composite indexes for queries with multiple filters. Create t
 
 1. Go to **Project Settings** (gear icon) → **General**
 2. Under **Your apps**, click **Web** (</>) to register a web app
-3. Give it a nickname (e.g., `peerconnect-web`)
+3. Give it a nickname (e.g., `transactions-web`)
 4. Copy the `firebaseConfig` values — you'll need them for `.env.local`
 
 #### Deploy Security Rules
@@ -166,9 +166,8 @@ Email notifications are optional — the app works without them.
 
 1. Sign up at [emailjs.com](https://www.emailjs.com/) (free tier: 200 emails/month)
 2. **Create an email service** — connect Gmail, Outlook, or another provider
-3. **Create 3 email templates** with these names:
-   - `template_transaction` — New transaction notification
-   - `template_resolved` — Transaction approved/disputed
+3. **Create 2 email templates** with these names:
+   - `template_transaction` — New transactions, approvals, and disputes
    - `template_invite` — Pair invitation
 4. Each template should use these variables:
    - `{{to_name}}`, `{{from_name}}`, `{{subject}}`, `{{message}}`, `{{action_url}}`
@@ -178,7 +177,6 @@ Email notifications are optional — the app works without them.
 NEXT_PUBLIC_EMAILJS_SERVICE_ID=service_xxxxx
 NEXT_PUBLIC_EMAILJS_PUBLIC_KEY=your_public_key
 NEXT_PUBLIC_EMAILJS_TEMPLATE_TRANSACTION=template_transaction
-NEXT_PUBLIC_EMAILJS_TEMPLATE_RESOLVED=template_resolved
 NEXT_PUBLIC_EMAILJS_TEMPLATE_INVITE=template_invite
 ```
 
@@ -229,8 +227,7 @@ Firebase App Hosting supports Next.js natively:
 | `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | ❌ | Google Analytics measurement ID |
 | `NEXT_PUBLIC_EMAILJS_SERVICE_ID` | ❌ | EmailJS service ID |
 | `NEXT_PUBLIC_EMAILJS_PUBLIC_KEY` | ❌ | EmailJS public key |
-| `NEXT_PUBLIC_EMAILJS_TEMPLATE_TRANSACTION` | ❌ | EmailJS template: new transaction |
-| `NEXT_PUBLIC_EMAILJS_TEMPLATE_RESOLVED` | ❌ | EmailJS template: resolved transaction |
+| `NEXT_PUBLIC_EMAILJS_TEMPLATE_TRANSACTION` | ❌ | EmailJS template: new transactions, approvals, and disputes |
 | `NEXT_PUBLIC_EMAILJS_TEMPLATE_INVITE` | ❌ | EmailJS template: pair invite |
 
 ---

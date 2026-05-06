@@ -31,13 +31,24 @@ service cloud.firestore {
         allow read: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
 
-        // Any paired user can create a transaction
+        // Any paired user can create a transaction, attributed to either member
         allow create: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users
-          && request.resource.data.createdBy == request.auth.uid;
+          && request.resource.data.createdBy in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
 
         // Any paired user can update status (approve/dispute)
         allow update: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+      }
+
+      // ─── Balance Snapshots (subcollection) ────────────
+      match /balanceSnapshots/{snapId} {
+        // Only paired users can read
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+
+        // Any paired user can create a snapshot
+        allow create: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
       }
     }

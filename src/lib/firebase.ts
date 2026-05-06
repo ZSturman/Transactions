@@ -1,6 +1,6 @@
 import { initializeApp, getApps, FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, Auth } from "firebase/auth";
-import { getFirestore, Firestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider, Auth, connectAuthEmulator } from "firebase/auth";
+import { getFirestore, Firestore, connectFirestoreEmulator } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -18,10 +18,16 @@ function getFirebaseApp(): FirebaseApp {
 
 let _auth: Auth | undefined;
 let _db: Firestore | undefined;
+let _authEmulatorConnected = false;
+let _dbEmulatorConnected = false;
 
 export function getFirebaseAuth(): Auth {
   if (!_auth) {
     _auth = getAuth(getFirebaseApp());
+    if (process.env.NEXT_PUBLIC_USE_EMULATORS === "true" && !_authEmulatorConnected) {
+      connectAuthEmulator(_auth, "http://localhost:9099", { disableWarnings: true });
+      _authEmulatorConnected = true;
+    }
   }
   return _auth;
 }
@@ -29,6 +35,10 @@ export function getFirebaseAuth(): Auth {
 export function getFirebaseDb(): Firestore {
   if (!_db) {
     _db = getFirestore(getFirebaseApp());
+    if (process.env.NEXT_PUBLIC_USE_EMULATORS === "true" && !_dbEmulatorConnected) {
+      connectFirestoreEmulator(_db, "localhost", 8080);
+      _dbEmulatorConnected = true;
+    }
   }
   return _db;
 }

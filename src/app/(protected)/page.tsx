@@ -1,98 +1,139 @@
 "use client";
 
-import { useState } from "react";
-import { collection, addDoc, serverTimestamp, doc, setDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useState, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePairs } from "@/hooks/usePairs";
 import { useInvites } from "@/hooks/useInvites";
-import { CURRENCIES } from "@/types";
+import { useAllTransactions } from "@/hooks/useAllTransactions";
+import { useAllBalanceSnapshots } from "@/hooks/useAllBalanceSnapshots";
 import { formatAmount } from "@/utils/currency";
-import { sendInviteEmail } from "@/lib/emailjs";
 import PairCard from "@/components/PairCard";
+import TransactionModal from "@/components/TransactionModal";
+import TransactionTable from "@/components/TransactionTable";
+import PendingTransactionBanner from "@/components/PendingTransactionBanner";
+import NetBalanceTrendChart from "@/components/NetBalanceTrendChart";
+import TransactionActivityChart from "@/components/TransactionActivityChart";
+import DashboardFilterBar, { DashboardFilters } from "@/components/DashboardFilterBar";
 import toast from "react-hot-toast";
+
+type ViewMode = "cards" | "table";
+type Period = "7D" | "30D" | "90D" | "1Y" | "all";
+
+const DEFAULT_FILTERS: DashboardFilters = {
+  searchText: "",
+  statusFilter: "all",
+  typeFilter: "all",
+  pairFilter: "all",
+};
 
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const { pairs, loading: pairsLoading } = usePairs();
   const { pendingInvites, acceptInvite, loading: invitesLoading } = useInvites();
 
-  const [showInvite, setShowInvite] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteCurrency, setInviteCurrency] = useState(profile?.currency || "USD");
-  const [sending, setSending] = useState(false);
+  const activePairs = useMemo(
+    () => pairs.filter((p) => p.status === "active"),
+    [pairs]
+  );
+  const pendingPairs = useMemo(
+    () => pairs.filter((p) => p.status === "pending"),
+    [pairs]
+  );
 
-  const activePairs = pairs.filter((p) => p.status === "active");
-  const pendingPairs = pairs.filter((p) => p.status !== "active");
+  const { transactions } = useAllTransactions(activePairs);
+  const { snapshots } = useAllBalanceSnapshots(activePairs);
 
-  const netBalance = activePairs.reduce((sum, pair) => {
-    const idx = pair.users.indexOf(user!.uid);
-    const bal = idx === 0 ? pair.balance : -pair.balance;
-    return sum + bal;
-  }, 0);
+  const [showModal, setShowModal] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("cards");
+  const [period, setPeriod] = useState<Period>("30D");
+  const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
 
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault();
-    if (!user || !profile) return;
+  // ── Pending transactions that need the current user's action ──
+  const pendingActionTxs = useMemo(
+    () => transactions.filter((tx) => tx.status === "pending" && tx.createdBy !== user?.uid),
+    [transactions, user]
+  );
 
-    const normalizedEmail = inviteEmail.toLowerCase().trim();
-    if (normalizedEmail === user.email?.toLowerCase()) {
-      toast.error("You can't invite yourself");
-      return;
+  const { owedToMe, iOwe } = activePairs.reduce(
+    (acc, pair) => {
+      const idx = pair.users.indexOf(user!.uid);
+      const bal = idx === 0 ? pair.balance : -pair.balance;
+      if (bal > 0) acc.owedToMe += bal;
+      else if (bal < 0) acc.iOwe += Math.abs(bal);
+      return acc;
+    },
+    { owedToMe: 0, iOwe: 0 }
+  );
+  const netBalance = owedToMe - iOwe;
+  const currency = profile?.currency || "USD";
+
+  // ── Filtered transactions (for cards + table views) ──
+  const filteredTransactions = useMemo(() => {
+    const { searchText, statusFilter, typeFilter, pairFilter } = filters;
+    let result = transactions;
+
+    if (pairFilter !== "all") {
+      result = result.filter((tx) => tx.pairId === pairFilter);
+    }
+    if (statusFilter !== "all") {
+      result = result.filter((tx) => tx.status === statusFilter);
+    }
+    if (typeFilter !== "all") {
+      result = result.filter((tx) => tx.type === typeFilter);
+    }
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase().trim();
+      const pairById = Object.fromEntries(activePairs.map((p) => [p.id, p]));
+      result = result.filter((tx) => {
+        if (tx.description?.toLowerCase().includes(q)) return true;
+        if (tx.type.toLowerCase().includes(q)) return true;
+        if (tx.amount.toString().includes(q)) return true;
+        const pair = pairById[tx.pairId];
+        if (pair) {
+          const idx = user ? pair.users.indexOf(user.uid) : -1;
+          const partnerName = idx !== -1 ? pair.userNames[idx === 0 ? 1 : 0] : "";
+          const partnerEmail = idx !== -1 ? pair.userEmails[idx === 0 ? 1 : 0] : "";
+          if (partnerName.toLowerCase().includes(q)) return true;
+          if (partnerEmail.toLowerCase().includes(q)) return true;
+        }
+        return false;
+      });
+    }
+    return result;
+  }, [transactions, filters, activePairs, user]);
+
+  // ── Filtered pairs for card view ──
+  const filteredPairs = useMemo(() => {
+    const { searchText, pairFilter } = filters;
+    const isAnyFilterActive =
+      filters.statusFilter !== "all" ||
+      filters.typeFilter !== "all" ||
+      pairFilter !== "all" ||
+      searchText.trim() !== "";
+
+    if (!isAnyFilterActive) return activePairs;
+
+    const matchedPairIds = new Set(filteredTransactions.map((tx) => tx.pairId));
+
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase().trim();
+      activePairs.forEach((pair) => {
+        const idx = user ? pair.users.indexOf(user.uid) : -1;
+        const partnerName = idx !== -1 ? pair.userNames[idx === 0 ? 1 : 0] : "";
+        const partnerEmail = idx !== -1 ? pair.userEmails[idx === 0 ? 1 : 0] : "";
+        if (
+          partnerName.toLowerCase().includes(q) ||
+          partnerEmail.toLowerCase().includes(q)
+        ) {
+          matchedPairIds.add(pair.id);
+        }
+      });
     }
 
-    const existingPair = pairs.find((p) =>
-      p.userEmails.some((e) => e.toLowerCase() === normalizedEmail)
-    );
-    if (existingPair) {
-      toast.error("You already have a balance with this person");
-      return;
-    }
+    return activePairs.filter((p) => matchedPairIds.has(p.id));
+  }, [activePairs, filteredTransactions, filters, user]);
 
-    setSending(true);
-    try {
-      const pairRef = doc(collection(db, "pairs"));
-      await setDoc(pairRef, {
-        users: [user.uid, ""],
-        userEmails: [user.email!.toLowerCase(), normalizedEmail],
-        userNames: [profile.displayName || user.email!, ""],
-        balance: 0,
-        currency: inviteCurrency,
-        status: "pending",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      await addDoc(collection(db, "invites"), {
-        fromUid: user.uid,
-        fromEmail: user.email!.toLowerCase(),
-        fromName: profile.displayName || user.email!,
-        toEmail: normalizedEmail,
-        pairId: pairRef.id,
-        status: "pending",
-        createdAt: serverTimestamp(),
-      });
-
-      await sendInviteEmail({
-        to_email: normalizedEmail,
-        to_name: normalizedEmail.split("@")[0],
-        from_name: profile.displayName || user.email!,
-        subject: `${profile.displayName} invited you to track a shared balance`,
-        message: `${profile.displayName} wants to track a shared balance with you on PeerConnect. Sign up or log in to accept the invite.`,
-        action_url: window.location.origin,
-      });
-
-      toast.success("Invite sent!");
-      setInviteEmail("");
-      setShowInvite(false);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to send invite");
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function handleAcceptInvite(invite: typeof pendingInvites[0]) {
+  async function handleAcceptInvite(invite: (typeof pendingInvites)[0]) {
     try {
       await acceptInvite(invite);
       toast.success(`Connected with ${invite.fromName}!`);
@@ -111,41 +152,28 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header summary */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">
-            Welcome, {profile?.displayName || "there"}
-          </h1>
-          {activePairs.length > 0 && (
-            <p className="text-sm text-gray-500 mt-1">
-              Net balance:{" "}
-              <span className={netBalance >= 0 ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
-                {netBalance >= 0 ? "+" : ""}
-                {formatAmount(netBalance, profile?.currency || "USD")}
-              </span>
-            </p>
-          )}
-        </div>
-        <button onClick={() => setShowInvite(!showInvite)} className="btn-primary text-sm">
-          + New Balance
-        </button>
-      </div>
-
-      {/* Pending invites for this user */}
+      {/* ── Pending Invites Banner ── */}
       {pendingInvites.length > 0 && (
-        <div className="card border-blue-200 bg-blue-50">
-          <h2 className="text-sm font-semibold text-blue-800 mb-3">Pending Invites</h2>
+        <div className="rounded-2xl border-2 border-blue-400 bg-blue-50 p-4">
+          <h2 className="text-sm font-bold text-blue-800 mb-3 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            {pendingInvites.length === 1
+              ? "1 Pending Invite"
+              : `${pendingInvites.length} Pending Invites`}
+          </h2>
           <div className="space-y-2">
             {pendingInvites.map((invite) => (
-              <div key={invite.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-blue-100">
+              <div
+                key={invite.id}
+                className="flex items-center justify-between bg-white rounded-xl p-3 border border-blue-100"
+              >
                 <div>
-                  <p className="font-medium text-sm">{invite.fromName}</p>
+                  <p className="font-semibold text-sm">{invite.fromName}</p>
                   <p className="text-xs text-gray-500">{invite.fromEmail}</p>
                 </div>
                 <button
                   onClick={() => handleAcceptInvite(invite)}
-                  className="btn-primary text-xs px-3 py-1"
+                  className="btn-primary text-xs px-4 py-1.5"
                 >
                   Accept
                 </button>
@@ -155,68 +183,195 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Invite form */}
-      {showInvite && (
-        <div className="card">
-          <h2 className="text-sm font-semibold mb-3">Invite someone to track a balance</h2>
-          <form onSubmit={handleInvite} className="space-y-3">
-            <input
-              type="email"
-              className="input-field text-sm"
-              placeholder="Their email address"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              required
-            />
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Currency for this balance</label>
-              <select
-                className="input-field text-sm"
-                value={inviteCurrency}
-                onChange={(e) => setInviteCurrency(e.target.value)}
-              >
-                {CURRENCIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.symbol} {c.code}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="btn-primary text-sm" disabled={sending}>
-                {sending ? "Sending…" : "Send Invite"}
-              </button>
-              <button type="button" onClick={() => setShowInvite(false)} className="btn-secondary text-sm">
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
+      {/* ── Pending Transactions Banner ── */}
+      {pendingActionTxs.length > 0 && (
+        <PendingTransactionBanner
+          pendingTxs={pendingActionTxs}
+          pairs={activePairs}
+        />
       )}
 
-      {/* Active pairs */}
-      {activePairs.length > 0 ? (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Active Balances
-          </h2>
-          {activePairs.map((pair) => (
-            <PairCard key={pair.id} pair={pair} />
-          ))}
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {profile?.displayName
+              ? `Hi, ${profile.displayName.split(" ")[0]}`
+              : "Dashboard"}
+          </h1>
+          {activePairs.length > 0 && (
+            <p className="text-sm text-gray-500 mt-0.5">
+              Here&apos;s your money overview
+            </p>
+          )}
         </div>
-      ) : pendingPairs.length === 0 && pendingInvites.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <div className="text-4xl mb-3">🤝</div>
-          <p className="text-lg font-medium">No balances yet</p>
-          <p className="text-sm mt-1">
-            Invite someone to start tracking a shared balance
-          </p>
-        </div>
-      ) : null}
+        <button
+          onClick={() => setShowModal(true)}
+          className="btn-primary text-sm flex-shrink-0"
+        >
+          + Transaction
+        </button>
+      </div>
 
-      {/* Pending pairs (invite sent but not accepted) */}
+      {activePairs.length > 0 && (
+        <>
+          {/* ── Hero Chart ── */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-1">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                  Net Balance
+                </p>
+                <p
+                  className={`text-2xl font-bold mt-0.5 ${
+                    netBalance > 0
+                      ? "text-green-600"
+                      : netBalance < 0
+                      ? "text-red-600"
+                      : "text-gray-400"
+                  }`}
+                >
+                  {netBalance >= 0 ? "+" : ""}
+                  {formatAmount(Math.abs(netBalance), currency)}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {netBalance > 0
+                    ? "Overall, you are owed money"
+                    : netBalance < 0
+                    ? "Overall, you owe money"
+                    : "You're all settled up"}
+                </p>
+              </div>
+            </div>
+            <NetBalanceTrendChart
+              snapshots={snapshots}
+              pairs={activePairs}
+              currency={currency}
+              period={period}
+              onPeriodChange={setPeriod}
+            />
+          </div>
+
+          {/* ── Stats + Activity Row ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mb-1">
+                  Owed to you
+                </p>
+                <p className="text-xl font-bold text-green-700">
+                  {formatAmount(owedToMe, currency)}
+                </p>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-center">
+                <p className="text-xs text-red-600 font-semibold uppercase tracking-wide mb-1">
+                  You owe
+                </p>
+                <p className="text-xl font-bold text-red-700">
+                  {formatAmount(iOwe, currency)}
+                </p>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                Activity
+              </p>
+              <TransactionActivityChart
+                transactions={transactions}
+                currency={currency}
+                period={period}
+              />
+            </div>
+          </div>
+
+          {/* ── Active Balances ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                Active Balances
+              </h2>
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode("cards")}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    viewMode === "cards"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Cards
+                </button>
+                <button
+                  onClick={() => setViewMode("table")}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    viewMode === "table"
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Table
+                </button>
+              </div>
+            </div>
+
+            <DashboardFilterBar
+              filters={filters}
+              onChange={setFilters}
+              pairs={activePairs}
+              totalCount={transactions.length}
+              filteredCount={filteredTransactions.length}
+            />
+
+            {viewMode === "cards" ? (
+              filteredPairs.length > 0 ? (
+                <div className="space-y-2">
+                  {filteredPairs.map((pair) => (
+                    <PairCard key={pair.id} pair={pair} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  No matches found.{" "}
+                  <button
+                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )
+            ) : (
+              <TransactionTable
+                transactions={filteredTransactions}
+                pairs={activePairs}
+                hideStatusFilter
+              />
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Empty State ── */}
+      {activePairs.length === 0 &&
+        pendingPairs.length === 0 &&
+        pendingInvites.length === 0 && (
+          <div className="text-center py-16 text-gray-400">
+            <div className="text-5xl mb-4">💸</div>
+            <p className="text-lg font-semibold text-gray-600">
+              No transactions yet
+            </p>
+            <p className="text-sm mt-1 mb-6">
+              Start by recording a transaction with someone.
+            </p>
+            <button onClick={() => setShowModal(true)} className="btn-primary">
+              + Transaction
+            </button>
+          </div>
+        )}
+
+      {/* ── Pending Connections ── */}
       {pendingPairs.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             Pending Connections
           </h2>
@@ -225,9 +380,13 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium text-sm">
-                    {pair.userEmails.find((e) => e !== user?.email?.toLowerCase())}
+                    {pair.userEmails.find(
+                      (e) => e !== user?.email?.toLowerCase()
+                    )}
                   </p>
-                  <p className="text-xs text-gray-400">Waiting for them to accept…</p>
+                  <p className="text-xs text-gray-400">
+                    Waiting for them to accept…
+                  </p>
                 </div>
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
                   Pending
@@ -236,6 +395,10 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {showModal && (
+        <TransactionModal pairs={pairs} onClose={() => setShowModal(false)} />
       )}
     </div>
   );

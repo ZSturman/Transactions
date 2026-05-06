@@ -5,11 +5,12 @@ import {
   collection,
   addDoc,
   serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Pair } from "@/types";
-import { sendTransactionEmail } from "@/lib/emailjs";
+import { sendTransactionEmail } from "@/lib/email";
 import { formatAmount } from "@/utils/currency";
 import toast from "react-hot-toast";
 
@@ -23,6 +24,7 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [direction, setDirection] = useState<"i_paid" | "they_paid">("i_paid");
+  const [txDate, setTxDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [loading, setLoading] = useState(false);
 
   if (!user) return null;
@@ -49,6 +51,7 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
         description: description || (direction === "i_paid" ? "Payment" : "Request"),
         createdBy: user!.uid,
         status: "pending",
+        date: Timestamp.fromDate(new Date(txDate + "T12:00:00")),
         createdAt: serverTimestamp(),
       });
 
@@ -110,19 +113,17 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
           <input
             type="number"
             step="0.01"
-            min="0.01"
             className="input-field text-lg font-semibold"
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            required
             autoFocus
           />
         </div>
 
         {/* Description */}
         <div>
-          <label className="block text-xs text-gray-500 mb-1">What's it for? (optional)</label>
+          <label className="block text-xs text-gray-500 mb-1">What&apos;s it for? (optional)</label>
           <input
             type="text"
             className="input-field text-sm"
@@ -130,6 +131,18 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             maxLength={200}
+          />
+        </div>
+
+        {/* Date */}
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Date</label>
+          <input
+            type="date"
+            className="input-field text-sm"
+            value={txDate}
+            onChange={(e) => setTxDate(e.target.value)}
+            max={new Date().toISOString().split("T")[0]}
           />
         </div>
 

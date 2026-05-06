@@ -9,8 +9,20 @@ import {
   signInWithPopup,
   signOut,
   updateProfile,
+  deleteUser,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  Timestamp,
+  writeBatch,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
 import { UserProfile } from "@/types";
 
@@ -23,9 +35,30 @@ interface AuthContextValue {
   signInGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+function isFirestoreUnavailableError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "unavailable"
+  );
+}
+
+function profileFromAuthUser(user: User, current?: UserProfile | null): UserProfile {
+  return {
+    uid: user.uid,
+    email: user.email ?? current?.email ?? "",
+    displayName: user.displayName ?? current?.displayName ?? "",
+    photoURL: user.photoURL ?? current?.photoURL ?? "",
+    currency: current?.currency ?? "USD",
+    createdAt: current?.createdAt ?? Timestamp.now(),
+  };
+}
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
@@ -59,8 +92,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function refreshProfile() {
     if (!auth.currentUser) return;
     const ref = doc(db, "users", auth.currentUser.uid);
-    const snap = await getDoc(ref);
-    if (snap.exists()) setProfile({ uid: auth.currentUser.uid, ...snap.data() } as UserProfile);
+    try {
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        setProfile({ uid: auth.currentUser.uid, ...snap.data() } as UserProfile);
+      } else {
+        setProfile((prev) => profileFromAuthUser(auth.currentUser!, prev));
+      }
+    } catch (err) {
+      if (isFirestoreUnavailableError(err)) {
+        setProfile((prev) => prev ?? profileFromAuthUser(auth.currentUser!, prev));
+        return;
+      }
+      throw err;
+    }
   }
 
   useEffect(() => {
@@ -71,8 +116,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const p = await ensureUserDoc(u);
           setProfile(p);
         } catch (err) {
-          console.error("Failed to load user profile:", err);
-          setProfile(null);
+          if (isFirestoreUnavailableError(err)) {
+            setProfile((prev) => prev ?? profileFromAuthUser(u, prev));
+          } else {
+            console.error("Failed to load user profile:", err);
+            setProfile(null);
+          }
         }
       } else {
         setProfile(null);
@@ -82,10 +131,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsub;
   }, []);
 
+  useEffect(() => {
+    const onOnline = () => {
+      refreshProfile().catch(() => undefined);
+    };
+
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   async function signInEmail(email: string, password: string) {
     const cred = await signInWithEmailAndPassword(auth, email, password);
-    const p = await ensureUserDoc(cred.user);
-    setProfile(p);
+    try {
+      const p = await ensureUserDoc(cred.user);
+      setProfile(p);
+    } catch (err) {
+      if (isFirestoreUnavailableError(err)) {
+        setProfile((prev) => profileFromAuthUser(cred.user, prev));
+        return;
+      }
+      throw err;
+    }
   }
 
   async function signUpEmail(email: string, password: string, displayName: string, currency: string) {
@@ -97,8 +163,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signInGoogle() {
     const cred = await signInWithPopup(auth, googleProvider);
-    const p = await ensureUserDoc(cred.user);
-    setProfile(p);
+    try {
+      const p = await ensureUserDoc(cred.user);
+      setProfile(p);
+    } catch (err) {
+      if (isFirestoreUnavailableError(err)) {
+        setProfile((prev) => profileFromAuthUser(cred.user, prev));
+        return;
+      }
+      throw err;
+    }
   }
 
   async function logout() {
@@ -107,8 +181,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   }
 
+  async function deleteAccount() {
+    const currentUser = auth.currentUser;
+    if (!currentUser) throw new Error("Not authenticated");
+
+    // Soft-delete: mark pairs with deletedUsers, mark user doc deleted
+    const pairsSnap = await getDocs(
+      query(collection(db, "pairs"), where("users", "array-contains", currentUser.uid))
+    );
+
+    const batch = writeBatch(db);
+    pairsSnap.docs.forEach((pairDoc) => {
+      batch.update(pairDoc.ref, {
+        [`deletedUsers.${currentUser.uid}`]: { deletedAt: serverTimestamp() },
+      });
+    });
+    batch.update(doc(db, "users", currentUser.uid), {
+      deleted: true,
+      deletedAt: serverTimestamp(),
+    });
+    await batch.commit();
+
+    await deleteUser(currentUser);
+    setUser(null);
+    setProfile(null);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signInEmail, signUpEmail, signInGoogle, logout, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, signInEmail, signUpEmail, signInGoogle, logout, refreshProfile, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

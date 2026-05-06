@@ -8,6 +8,8 @@ export interface UserProfile {
   photoURL: string;
   currency: string;
   createdAt: Timestamp;
+  deleted?: boolean;
+  deletedAt?: Timestamp;
 }
 
 // ─── Pairs ──────────────────────────────────────────────
@@ -18,14 +20,15 @@ export interface Pair {
   userNames: [string, string];
   balance: number;                    // positive → users[0] is owed; negative → users[1] is owed
   currency: string;
-  status: "active" | "archived";
+  status: "active" | "archived" | "pending";
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  deletedUsers?: Record<string, { deletedAt: Timestamp }>;
 }
 
 // ─── Transactions ───────────────────────────────────────
 export type TransactionStatus = "pending" | "approved" | "disputed";
-export type TransactionType = "payment" | "request" | "adjustment";
+export type TransactionType = "payment" | "request" | "adjustment" | "settlement" | "forgiveness";
 
 export interface Transaction {
   id: string;
@@ -36,12 +39,30 @@ export interface Transaction {
   createdBy: string;                  // uid of creator
   status: TransactionStatus;
   disputeReason?: string;
+  proposedAmount?: number;            // counter-proposal amount in disputes
+  date?: Timestamp;                   // user-specified event date (defaults to createdAt for display)
   createdAt: Timestamp;
   resolvedAt?: Timestamp;
 }
 
+// ─── Balance Snapshots ──────────────────────────────────
+export interface BalanceSnapshot {
+  id: string;
+  balance: number;                    // from perspective of users[0]
+  timestamp: Timestamp;
+  triggeredBy: string;                // uid of user who triggered the change
+  reason: string;                     // e.g. "approved", "settled", "forgiven"
+}
+
 // ─── Invites ────────────────────────────────────────────
 export type InviteStatus = "pending" | "accepted" | "expired";
+
+export interface PendingTransaction {
+  amount: number;
+  type: TransactionType;
+  description: string;
+  date: string; // ISO date string (YYYY-MM-DD)
+}
 
 export interface Invite {
   id: string;
@@ -51,6 +72,7 @@ export interface Invite {
   toEmail: string;
   pairId: string;
   status: InviteStatus;
+  pendingTransaction?: PendingTransaction;
   createdAt: Timestamp;
 }
 

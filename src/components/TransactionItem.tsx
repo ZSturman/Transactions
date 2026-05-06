@@ -4,56 +4,86 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Transaction, Pair } from "@/types";
 import { formatAmount } from "@/utils/currency";
+import DisputeWithCounterForm from "@/components/DisputeWithCounterForm";
 
 interface TransactionItemProps {
   transaction: Transaction;
   pair: Pair;
   onApprove: (tx: Transaction) => void;
-  onDispute: (tx: Transaction, reason: string) => void;
+  onDispute: (tx: Transaction, reason: string, proposedAmount?: number) => void;
+  onAcceptCounter?: (tx: Transaction) => void;
+  onRejectCounter?: (tx: Transaction) => void;
 }
 
-export default function TransactionItem({ transaction: tx, pair, onApprove, onDispute }: TransactionItemProps) {
+export default function TransactionItem({
+  transaction: tx,
+  pair,
+  onApprove,
+  onDispute,
+  onAcceptCounter,
+  onRejectCounter,
+}: TransactionItemProps) {
   const { user } = useAuth();
   const [showDispute, setShowDispute] = useState(false);
-  const [disputeReason, setDisputeReason] = useState("");
 
   if (!user) return null;
 
   const isCreator = tx.createdBy === user.uid;
   const idx = pair.users.indexOf(user.uid);
   const creatorName = isCreator ? "You" : pair.userNames[idx === 0 ? 1 : 0];
+  const isDeleted = pair.deletedUsers && pair.deletedUsers[tx.createdBy];
 
   const isPending = tx.status === "pending" && !isCreator;
+  const isDisputedWithCounter =
+    tx.status === "disputed" && tx.proposedAmount !== undefined && isCreator;
+
   const statusColors: Record<string, string> = {
     pending: "bg-yellow-100 text-yellow-700",
     approved: "bg-green-100 text-green-700",
     disputed: "bg-red-100 text-red-700",
+    settlement: "bg-teal-100 text-teal-700",
+    forgiveness: "bg-purple-100 text-purple-700",
   };
 
-  const date = tx.createdAt?.toDate?.()
-    ? tx.createdAt.toDate().toLocaleDateString("en-US", {
+  const displayDate = (tx.date ?? tx.createdAt)?.toDate?.();
+  const date = displayDate
+    ? displayDate.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
+        year: "numeric",
       })
     : "Just now";
 
-  // Determine display: "I paid" vs "They paid" from current user's perspective
   let label: string;
-  if (tx.type === "payment") {
-    label = isCreator ? "You paid" : `${creatorName} paid`;
+  if (tx.type === "settlement") {
+    label = isCreator ? "You settled" : `${isDeleted ? "[Deleted Account]" : creatorName} settled`;
+  } else if (tx.type === "forgiveness") {
+    label = isCreator
+      ? "You forgave"
+      : `${isDeleted ? "[Deleted Account]" : creatorName} forgave`;
+  } else if (tx.type === "payment") {
+    label = isCreator ? "You paid" : `${isDeleted ? "[Deleted Account]" : creatorName} paid`;
   } else {
-    label = isCreator ? "You requested" : `${creatorName} requested`;
+    label = isCreator
+      ? "You requested"
+      : `${isDeleted ? "[Deleted Account]" : creatorName} requested`;
   }
 
+  const statusLabel = tx.type === "settlement" ? "settled" : tx.type === "forgiveness" ? "forgiven" : tx.status;
+
   return (
-    <div className={`card ${tx.status === "disputed" ? "border-red-200" : tx.status === "pending" && !isCreator ? "border-blue-200" : ""}`}>
+    <div
+      className={`card ${tx.status === "disputed" ? "border-red-200" : tx.status === "pending" && !isCreator ? "border-blue-200 bg-blue-50/30" : ""}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[tx.status]}`}>
-              {tx.status}
+            <span
+              className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
+                statusColors[statusLabel] || statusColors[tx.status] || "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {statusLabel}
             </span>
             <span className="text-xs text-gray-400">{date}</span>
           </div>
@@ -63,18 +93,26 @@ export default function TransactionItem({ transaction: tx, pair, onApprove, onDi
           )}
           {tx.status === "disputed" && tx.disputeReason && (
             <p className="text-xs text-red-500 mt-1 italic">
-              Dispute: "{tx.disputeReason}"
+              Dispute: &ldquo;{tx.disputeReason}&rdquo;
             </p>
           )}
         </div>
         <div className="text-right flex-shrink-0">
-          <p className={`font-bold ${tx.type === "payment" ? "text-green-600" : "text-blue-600"}`}>
+          <p
+            className={`font-bold ${
+              tx.type === "settlement" || tx.type === "forgiveness"
+                ? "text-gray-500"
+                : tx.type === "payment"
+                ? "text-green-600"
+                : "text-blue-600"
+            }`}
+          >
             {formatAmount(tx.amount, pair.currency)}
           </p>
         </div>
       </div>
 
-      {/* Actions for pending transactions (only non-creator can approve/dispute) */}
+      {/* Pending: approve or dispute */}
       {isPending && (
         <div className="mt-3 pt-3 border-t border-gray-100">
           {!showDispute ? (
@@ -82,38 +120,38 @@ export default function TransactionItem({ transaction: tx, pair, onApprove, onDi
               <button onClick={() => onApprove(tx)} className="btn-primary text-xs px-3 py-1">
                 Approve
               </button>
-              <button onClick={() => setShowDispute(true)} className="btn-danger text-xs px-3 py-1">
+              <button
+                onClick={() => setShowDispute(true)}
+                className="btn-danger text-xs px-3 py-1"
+              >
                 Dispute
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
-              <input
-                type="text"
-                className="input-field text-xs"
-                placeholder="Reason for dispute…"
-                value={disputeReason}
-                onChange={(e) => setDisputeReason(e.target.value)}
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    onDispute(tx, disputeReason);
-                    setShowDispute(false);
-                    setDisputeReason("");
-                  }}
-                  className="btn-danger text-xs px-3 py-1"
-                  disabled={!disputeReason.trim()}
-                >
-                  Submit Dispute
-                </button>
-                <button onClick={() => setShowDispute(false)} className="btn-secondary text-xs px-3 py-1">
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <DisputeWithCounterForm
+              tx={tx}
+              currency={pair.currency}
+              onDispute={(reason, proposedAmount) => {
+                onDispute(tx, reason, proposedAmount);
+                setShowDispute(false);
+              }}
+              onCancel={() => setShowDispute(false)}
+            />
           )}
+        </div>
+      )}
+
+      {/* Creator sees counter-proposal */}
+      {isDisputedWithCounter && onAcceptCounter && onRejectCounter && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <DisputeWithCounterForm
+            tx={tx}
+            currency={pair.currency}
+            onDispute={() => {}}
+            onCancel={() => {}}
+            onAcceptCounter={() => onAcceptCounter(tx)}
+            onRejectCounter={() => onRejectCounter(tx)}
+          />
         </div>
       )}
     </div>

@@ -211,19 +211,29 @@ export interface EmailJSCall {
 }
 
 /**
- * Intercepts all requests to api.emailjs.com on the given page and records
- * the template_id of each send call. Returns the mutable `calls` array so
- * tests can assert on it after actions.
+ * Intercepts all requests to /api/send-email on the given page and records
+ * the resolved EmailJS template ID for each send call. Returns the mutable
+ * `calls` array so tests can assert on it after actions.
+ *
+ * Email sending is now server-side (@emailjs/nodejs), so we intercept at the
+ * Next.js API route boundary rather than at api.emailjs.com. The `type` field
+ * in the request body maps to:
+ *   invite      → template_invite
+ *   transaction → template_transaction
+ *   resolved    → template_transaction  (both share Template 2)
  */
 export function captureEmailCalls(page: Page): { calls: EmailJSCall[] } {
   const calls: EmailJSCall[] = [];
-  page.route("**/api.emailjs.com/**", async (route: Route) => {
+  page.route("**/api/send-email", async (route: Route) => {
     try {
       const body = route.request().postDataJSON() as Record<string, unknown>;
+      const type = String(body.type ?? "");
+      const templateId =
+        type === "invite" ? "template_invite" : "template_transaction";
       calls.push({
-        templateId: String(body.template_id ?? ""),
-        serviceId: String(body.service_id ?? ""),
-        params: (body.template_params as Record<string, unknown>) ?? {},
+        templateId,
+        serviceId: "test_service",
+        params: body as Record<string, unknown>,
       });
     } catch {
       // Non-JSON or unexpected body — still fulfill so the app doesn't error
@@ -231,7 +241,7 @@ export function captureEmailCalls(page: Page): { calls: EmailJSCall[] } {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ status: 200, text: "OK" }),
+      body: JSON.stringify({ ok: true, via: "emailjs" }),
     });
   });
   return { calls };

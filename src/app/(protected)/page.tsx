@@ -14,8 +14,9 @@ import PendingTransactionBanner from "@/components/PendingTransactionBanner";
 import NetBalanceTrendChart from "@/components/NetBalanceTrendChart";
 import TransactionActivityChart from "@/components/TransactionActivityChart";
 import DashboardFilterBar, { DashboardFilters } from "@/components/DashboardFilterBar";
-import { unhidePair } from "@/utils/transactionActions";
+import { unhidePair, cancelTransaction } from "@/utils/transactionActions";
 import toast from "react-hot-toast";
+import { Pair } from "@/types";
 
 type ViewMode = "cards" | "table";
 type Period = "7D" | "30D" | "90D" | "1Y" | "all";
@@ -30,7 +31,7 @@ const DEFAULT_FILTERS: DashboardFilters = {
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const { pairs, loading: pairsLoading } = usePairs();
-  const { pendingInvites, acceptInvite, loading: invitesLoading } = useInvites();
+  const { pendingInvites, sentInvites, acceptInvite, cancelInvite, loading: invitesLoading } = useInvites();
 
   const activePairs = useMemo(
     () => pairs.filter((p) => p.status === "active"),
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   );
 
   const [showModal, setShowModal] = useState(false);
+  const [sendRequestPair, setSendRequestPair] = useState<Pair | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [period, setPeriod] = useState<Period>("30D");
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
@@ -59,7 +61,8 @@ export default function DashboardPage() {
 
   // Always subscribe to ALL active pairs so the Show Archived toggle can
   // include hidden pairs' data in charts without remounting listeners.
-  const { transactions: rawTransactions } = useAllTransactions(activePairs, { includeArchived: showArchived });
+  // Also include pending pairs so we can count queued transaction requests.
+  const { transactions: rawTransactions } = useAllTransactions(pairs, { includeArchived: showArchived, includePending: true });
   const { snapshots: rawSnapshots } = useAllBalanceSnapshots(activePairs);
 
   // displayPairs = the pairs whose data feeds the charts & balance numbers
@@ -171,6 +174,26 @@ export default function DashboardPage() {
       toast.success(`Connected with ${invite.fromName}!`);
     } catch (err: any) {
       toast.error(err.message || "Failed to accept invite");
+    }
+  }
+
+  async function handleCancelInvite(pair: Pair) {
+    const invite = sentInvites.find((i) => i.pairId === pair.id);
+    if (!invite) return;
+    try {
+      await cancelInvite(invite);
+      toast.success("Invite cancelled");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to cancel invite");
+    }
+  }
+
+  async function handleCancelTransaction(pairId: string, txId: string) {
+    try {
+      await cancelTransaction(pairId, txId);
+      toast.success("Request cancelled");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to cancel request");
     }
   }
 
@@ -465,30 +488,62 @@ export default function DashboardPage() {
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             Pending Connections
           </h2>
-          {pendingPairs.map((pair) => (
-            <div key={pair.id} className="card opacity-60">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-sm">
-                    {pair.userEmails.find(
-                      (e) => e !== user?.email?.toLowerCase()
+          {pendingPairs.map((pair) => {
+            const queuedCount = rawTransactions.filter(
+              (tx) => tx.pairId === pair.id && tx.status === "pending"
+            ).length;
+            return (
+              <div key={pair.id} className="card">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">
+                      {pair.userEmails.find(
+                        (e) => e !== user?.email?.toLowerCase()
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      Waiting for them to accept…
+                    </p>
+                    {queuedCount > 0 && (
+                      <p className="text-xs text-blue-600 mt-0.5">
+                        {queuedCount} queued request{queuedCount === 1 ? "" : "s"}
+                      </p>
                     )}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    Waiting for them to accept…
-                  </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                      Pending
+                    </span>
+                    <button
+                      onClick={() => setSendRequestPair(pair)}
+                      className="text-xs btn-primary px-3 py-1"
+                    >
+                      + Request
+                    </button>
+                    <button
+                      onClick={() => handleCancelInvite(pair)}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-                <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-                  Pending
-                </span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {showModal && (
         <TransactionModal pairs={pairs} onClose={() => setShowModal(false)} />
+      )}
+
+      {sendRequestPair && (
+        <TransactionModal
+          pairs={pairs}
+          initialPair={sendRequestPair}
+          onClose={() => setSendRequestPair(null)}
+        />
       )}
     </div>
   );

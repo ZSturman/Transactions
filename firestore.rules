@@ -25,6 +25,11 @@ service cloud.firestore {
         && (request.auth.uid in resource.data.users
             || request.auth.token.email in resource.data.userEmails);
 
+      // Sender (users[0]) can delete a pending pair (cancel invite)
+      allow delete: if request.auth != null
+        && resource.data.status == "pending"
+        && request.auth.uid == resource.data.users[0];
+
       // ─── Transactions (subcollection) ─────────────────
       match /transactions/{txId} {
         // Only paired users can read
@@ -39,6 +44,12 @@ service cloud.firestore {
         // Any paired user can update status (approve/dispute)
         allow update: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+
+        // Creator can hard-delete their own pending transaction
+        allow delete: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users
+          && resource.data.createdBy == request.auth.uid
+          && resource.data.status == "pending";
       }
 
       // ─── Balance Snapshots (subcollection) ────────────
@@ -67,6 +78,11 @@ service cloud.firestore {
       // Recipient can accept (update status)
       allow update: if request.auth != null
         && resource.data.toEmail == request.auth.token.email;
+
+      // Sender can delete (cancel) a pending invite
+      allow delete: if request.auth != null
+        && resource.data.fromUid == request.auth.uid
+        && resource.data.status == "pending";
     }
   }
 }

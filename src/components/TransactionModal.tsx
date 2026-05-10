@@ -19,14 +19,15 @@ import toast from "react-hot-toast";
 interface TransactionModalProps {
   pairs: Pair[];
   onClose: () => void;
+  initialPair?: Pair;
 }
 
 type Step = "pick-person" | "fill-transaction";
 
-export default function TransactionModal({ pairs, onClose }: TransactionModalProps) {
+export default function TransactionModal({ pairs, onClose, initialPair }: TransactionModalProps) {
   const { user, profile } = useAuth();
-  const [step, setStep] = useState<Step>("pick-person");
-  const [selectedPair, setSelectedPair] = useState<Pair | null>(null);
+  const [step, setStep] = useState<Step>(initialPair ? "fill-transaction" : "pick-person");
+  const [selectedPair, setSelectedPair] = useState<Pair | null>(initialPair ?? null);
   const [showNewPersonForm, setShowNewPersonForm] = useState(false);
 
   // New person / invite state
@@ -148,20 +149,27 @@ export default function TransactionModal({ pairs, onClose }: TransactionModalPro
         createdAt: serverTimestamp(),
       });
 
-      const actionWord =
-        direction === "i_paid" ? "recorded a payment of" : "requested";
-      await sendTransactionEmail({
-        to_email: partnerEmail,
-        to_name: partnerName,
-        from_name: profile!.displayName || user!.email!,
-        subject: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}`,
-        message: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}${
-          description ? ` for "${description}"` : ""
-        }. Log in to approve or dispute this transaction.`,
-        action_url: `${window.location.origin}/pair/${selectedPair.id}`,
-      });
+      // Only send email notification for active pairs (pending pairs — partner hasn't signed up yet)
+      if (selectedPair.status === "active") {
+        const actionWord =
+          direction === "i_paid" ? "recorded a payment of" : "requested";
+        await sendTransactionEmail({
+          to_email: partnerEmail,
+          to_name: partnerName,
+          from_name: profile!.displayName || user!.email!,
+          subject: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}`,
+          message: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}${
+            description ? ` for "${description}"` : ""
+          }. Log in to approve or dispute this transaction.`,
+          action_url: `${window.location.origin}/pair/${selectedPair.id}`,
+        });
+      }
 
-      toast.success("Transaction recorded — waiting for approval");
+      toast.success(
+        selectedPair.status === "active"
+          ? "Transaction recorded — waiting for approval"
+          : "Request queued — will be sent when they accept your invite"
+      );
       onClose();
     } catch (err: any) {
       toast.error(err.message || "Failed to record transaction");
@@ -170,9 +178,11 @@ export default function TransactionModal({ pairs, onClose }: TransactionModalPro
     }
   }
 
+  const partnerIdx = selectedPair ? selectedPair.users.indexOf(user.uid) : -1;
   const partnerName =
-    selectedPair
-      ? selectedPair.userNames[selectedPair.users.indexOf(user.uid) === 0 ? 1 : 0]
+    selectedPair && partnerIdx !== -1
+      ? selectedPair.userNames[partnerIdx === 0 ? 1 : 0] ||
+        selectedPair.userEmails[partnerIdx === 0 ? 1 : 0]
       : "";
 
   return (
@@ -181,7 +191,7 @@ export default function TransactionModal({ pairs, onClose }: TransactionModalPro
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {step === "fill-transaction" && (
+            {step === "fill-transaction" && !initialPair && (
               <button
                 onClick={() => {
                   setStep("pick-person");

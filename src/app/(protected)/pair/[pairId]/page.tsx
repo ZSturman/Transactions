@@ -27,6 +27,7 @@ import {
   unarchiveTransaction,
   archiveResolvedForPair,
   hidePair,
+  cancelTransaction,
 } from "@/utils/transactionActions";
 import BalanceSummary from "@/components/BalanceSummary";
 import TransactionForm from "@/components/TransactionForm";
@@ -207,6 +208,15 @@ export default function PairDetailPage() {
     }
   }
 
+  async function handleCancelTransaction(tx: Transaction) {
+    try {
+      await cancelTransaction(pair!.id, tx.id);
+      toast.success("Request cancelled");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to cancel request");
+    }
+  }
+
   async function handleUnarchive(tx: Transaction) {
     try {
       await unarchiveTransaction(pair!.id, tx.id);
@@ -384,6 +394,7 @@ export default function PairDetailPage() {
           onRejectCounter={handleRejectCounter}
           onArchive={handleArchive}
           onUnarchive={handleUnarchive}
+          onCancel={handleCancelTransaction}
         />
       ) : (
         <TransactionTable

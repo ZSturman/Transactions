@@ -15,6 +15,7 @@ interface TransactionItemProps {
   onRejectCounter?: (tx: Transaction) => void;
   onArchive?: (tx: Transaction) => void;
   onUnarchive?: (tx: Transaction) => void;
+  onCancel?: (tx: Transaction) => void;
 }
 
 export default function TransactionItem({
@@ -26,6 +27,7 @@ export default function TransactionItem({
   onRejectCounter,
   onArchive,
   onUnarchive,
+  onCancel,
 }: TransactionItemProps) {
   const { user } = useAuth();
   const [showDispute, setShowDispute] = useState(false);
@@ -184,6 +186,18 @@ export default function TransactionItem({
                   Archive
                 </button>
               )}
+        </div>
+      )}
+
+      {/* Creator can cancel their own pending transaction */}
+      {tx.status === "pending" && isCreator && onCancel && (
+        <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={() => onCancel(tx)}
+            className="text-xs text-red-500 hover:text-red-700 hover:underline"
+          >
+            Cancel request
+          </button>
         </div>
       )}
     </div>

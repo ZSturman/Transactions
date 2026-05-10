@@ -9,16 +9,18 @@ export interface PairTransaction extends Transaction {
 
 export function useAllTransactions(
   pairs: Pair[],
-  options: { includeArchived?: boolean } = {}
+  options: { includeArchived?: boolean; includePending?: boolean } = {}
 ) {
-  const { includeArchived = false } = options;
+  const { includeArchived = false, includePending = false } = options;
   const [transactions, setTransactions] = useState<PairTransaction[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const activePairs = pairs.filter((p) => p.status === "active");
+    const targetPairs = pairs.filter(
+      (p) => p.status === "active" || (includePending && p.status === "pending")
+    );
 
-    if (activePairs.length === 0) {
+    if (targetPairs.length === 0) {
       setTransactions([]);
       setLoading(false);
       return;
@@ -26,11 +28,11 @@ export function useAllTransactions(
 
     // Map from pairId → array of transactions
     const txMap = new Map<string, PairTransaction[]>();
-    activePairs.forEach((p) => txMap.set(p.id, []));
+    targetPairs.forEach((p) => txMap.set(p.id, []));
 
-    let pendingCount = activePairs.length;
+    let pendingCount = targetPairs.length;
 
-    const unsubs = activePairs.map((pair) => {
+    const unsubs = targetPairs.map((pair) => {
       const q = query(
         collection(db, "pairs", pair.id, "transactions"),
         orderBy("createdAt", "desc")
@@ -68,7 +70,7 @@ export function useAllTransactions(
     });
 
     return () => unsubs.forEach((unsub) => unsub());
-  }, [pairs, includeArchived]);
+  }, [pairs, includeArchived, includePending]);
 
   return { transactions, loading };
 }

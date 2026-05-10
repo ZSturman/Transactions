@@ -7,6 +7,7 @@ import {
   collection,
   writeBatch,
   deleteField,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Pair, Transaction, UserProfile } from "@/types";
@@ -253,4 +254,12 @@ export async function hidePair(pairId: string): Promise<void> {
     hidden: true,
     hiddenAt: serverTimestamp(),
   });
+}
+
+/**
+ * Hard-delete a pending transaction that the current user created.
+ * Only works on transactions with status === "pending".
+ */
+export async function cancelTransaction(pairId: string, txId: string): Promise<void> {
+  await deleteDoc(doc(db, "pairs", pairId, "transactions", txId));
 }

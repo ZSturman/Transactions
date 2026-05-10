@@ -12,9 +12,10 @@ interface TransactionListProps {
   onRejectCounter?: (tx: Transaction) => void;
   onArchive?: (tx: Transaction) => void;
   onUnarchive?: (tx: Transaction) => void;
+  onCancel?: (tx: Transaction) => void;
 }
 
-export default function TransactionList({ transactions, pair, onApprove, onDispute, onAcceptCounter, onRejectCounter, onArchive, onUnarchive }: TransactionListProps) {
+export default function TransactionList({ transactions, pair, onApprove, onDispute, onAcceptCounter, onRejectCounter, onArchive, onUnarchive, onCancel }: TransactionListProps) {
   if (transactions.length === 0) {
     return (
       <div className="text-center py-8 text-gray-400 text-sm">
@@ -36,6 +37,7 @@ export default function TransactionList({ transactions, pair, onApprove, onDispu
           onRejectCounter={onRejectCounter}
           onArchive={onArchive}
           onUnarchive={onUnarchive}
+          onCancel={onCancel}
         />
       ))}
     </div>

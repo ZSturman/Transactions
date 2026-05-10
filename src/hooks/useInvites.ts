@@ -7,7 +7,9 @@ import {
   doc,
   updateDoc,
   getDoc,
+  getDocs,
   addDoc,
+  deleteDoc,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -18,28 +20,50 @@ import { Invite } from "@/types";
 export function useInvites() {
   const { user } = useAuth();
   const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
+  const [sentInvites, setSentInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user?.email) {
       setPendingInvites([]);
+      setSentInvites([]);
       setLoading(false);
       return;
     }
 
-    const q = query(
+    let receivedLoaded = false;
+    let sentLoaded = false;
+
+    const receivedQ = query(
       collection(db, "invites"),
       where("toEmail", "==", user.email.toLowerCase()),
       where("status", "==", "pending")
     );
 
-    const unsub = onSnapshot(q, (snap) => {
+    const sentQ = query(
+      collection(db, "invites"),
+      where("fromUid", "==", user.uid),
+      where("status", "==", "pending")
+    );
+
+    const unsubReceived = onSnapshot(receivedQ, (snap) => {
       const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Invite));
       setPendingInvites(items);
-      setLoading(false);
+      receivedLoaded = true;
+      if (sentLoaded) setLoading(false);
     });
 
-    return unsub;
+    const unsubSent = onSnapshot(sentQ, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Invite));
+      setSentInvites(items);
+      sentLoaded = true;
+      if (receivedLoaded) setLoading(false);
+    });
+
+    return () => {
+      unsubReceived();
+      unsubSent();
+    };
   }, [user]);
 
   async function acceptInvite(invite: Invite) {
@@ -87,5 +111,19 @@ export function useInvites() {
     }
   }
 
-  return { pendingInvites, loading, acceptInvite };
+  async function cancelInvite(invite: Invite) {
+    if (!user) return;
+
+    // Delete all queued transactions in the pending pair's subcollection
+    const txSnap = await getDocs(collection(db, "pairs", invite.pairId, "transactions"));
+    await Promise.all(txSnap.docs.map((d) => deleteDoc(d.ref)));
+
+    // Delete the pair document
+    await deleteDoc(doc(db, "pairs", invite.pairId));
+
+    // Delete the invite document
+    await deleteDoc(doc(db, "invites", invite.id));
+  }
+
+  return { pendingInvites, sentInvites, loading, acceptInvite, cancelInvite };
 }

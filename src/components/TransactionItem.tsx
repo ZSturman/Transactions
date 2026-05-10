@@ -13,6 +13,8 @@ interface TransactionItemProps {
   onDispute: (tx: Transaction, reason: string, proposedAmount?: number) => void;
   onAcceptCounter?: (tx: Transaction) => void;
   onRejectCounter?: (tx: Transaction) => void;
+  onArchive?: (tx: Transaction) => void;
+  onUnarchive?: (tx: Transaction) => void;
 }
 
 export default function TransactionItem({
@@ -22,6 +24,8 @@ export default function TransactionItem({
   onDispute,
   onAcceptCounter,
   onRejectCounter,
+  onArchive,
+  onUnarchive,
 }: TransactionItemProps) {
   const { user } = useAuth();
   const [showDispute, setShowDispute] = useState(false);
@@ -73,7 +77,7 @@ export default function TransactionItem({
 
   return (
     <div
-      className={`card ${tx.status === "disputed" ? "border-red-200" : tx.status === "pending" && !isCreator ? "border-blue-200 bg-blue-50/30" : ""}`}
+      className={`card ${tx.status === "disputed" ? "border-red-200" : tx.status === "pending" && !isCreator ? "border-blue-200 bg-blue-50/30" : ""} ${tx.archived ? "opacity-60" : ""}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -85,6 +89,11 @@ export default function TransactionItem({
             >
               {statusLabel}
             </span>
+            {tx.archived && (
+              <span className="inline-block text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-600">
+                archived
+              </span>
+            )}
             <span className="text-xs text-gray-400">{date}</span>
           </div>
           <p className="text-sm font-medium">{label}</p>
@@ -152,6 +161,29 @@ export default function TransactionItem({
             onAcceptCounter={() => onAcceptCounter(tx)}
             onRejectCounter={() => onRejectCounter(tx)}
           />
+        </div>
+      )}
+
+      {/* Archive controls (only for resolved approved transactions) */}
+      {tx.status === "approved" && (onArchive || onUnarchive) && (
+        <div className="mt-3 pt-3 border-t border-gray-100 flex justify-end">
+          {tx.archived
+            ? onUnarchive && (
+                <button
+                  onClick={() => onUnarchive(tx)}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Unarchive
+                </button>
+              )
+            : onArchive && (
+                <button
+                  onClick={() => onArchive(tx)}
+                  className="text-xs text-gray-500 hover:text-gray-800 hover:underline"
+                >
+                  Archive
+                </button>
+              )}
         </div>
       )}
     </div>

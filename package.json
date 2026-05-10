@@ -15,6 +15,7 @@
     "@emailjs/nodejs": "^5.0.2",
     "firebase": "^10.12.2",
     "next": "^15.1.0",
+    "papaparse": "^5.5.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hot-toast": "^2.4.1",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/node": "^22.10.0",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.19",

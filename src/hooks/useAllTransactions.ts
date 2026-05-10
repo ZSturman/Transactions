@@ -7,7 +7,11 @@ export interface PairTransaction extends Transaction {
   pairId: string;
 }
 
-export function useAllTransactions(pairs: Pair[]) {
+export function useAllTransactions(
+  pairs: Pair[],
+  options: { includeArchived?: boolean } = {}
+) {
+  const { includeArchived = false } = options;
   const [transactions, setTransactions] = useState<PairTransaction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,11 +37,13 @@ export function useAllTransactions(pairs: Pair[]) {
       );
 
       return onSnapshot(q, (snap) => {
-        const items = snap.docs.map((d) => ({
-          id: d.id,
-          pairId: pair.id,
-          ...d.data(),
-        } as PairTransaction));
+        const items = snap.docs
+          .map((d) => ({
+            id: d.id,
+            pairId: pair.id,
+            ...d.data(),
+          } as PairTransaction))
+          .filter((t) => includeArchived || t.archived !== true);
 
         txMap.set(pair.id, items);
 
@@ -62,7 +68,7 @@ export function useAllTransactions(pairs: Pair[]) {
     });
 
     return () => unsubs.forEach((unsub) => unsub());
-  }, [pairs]);
+  }, [pairs, includeArchived]);
 
   return { transactions, loading };
 }

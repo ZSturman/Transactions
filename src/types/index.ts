@@ -24,6 +24,8 @@ export interface Pair {
   createdAt: Timestamp;
   updatedAt: Timestamp;
   deletedUsers?: Record<string, { deletedAt: Timestamp }>;
+  hidden?: boolean;                   // hides this pair from dashboard (set after bulk archive)
+  hiddenAt?: Timestamp;
 }
 
 // ─── Transactions ───────────────────────────────────────
@@ -43,6 +45,8 @@ export interface Transaction {
   date?: Timestamp;                   // user-specified event date (defaults to createdAt for display)
   createdAt: Timestamp;
   resolvedAt?: Timestamp;
+  archived?: boolean;                 // soft-archive: hidden from default views
+  archivedAt?: Timestamp;
 }
 
 // ─── Balance Snapshots ──────────────────────────────────

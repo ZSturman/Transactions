@@ -14,6 +14,7 @@ import PendingTransactionBanner from "@/components/PendingTransactionBanner";
 import NetBalanceTrendChart from "@/components/NetBalanceTrendChart";
 import TransactionActivityChart from "@/components/TransactionActivityChart";
 import DashboardFilterBar, { DashboardFilters } from "@/components/DashboardFilterBar";
+import { unhidePair } from "@/utils/transactionActions";
 import toast from "react-hot-toast";
 
 type ViewMode = "cards" | "table";
@@ -40,13 +41,44 @@ export default function DashboardPage() {
     [pairs]
   );
 
-  const { transactions } = useAllTransactions(activePairs);
-  const { snapshots } = useAllBalanceSnapshots(activePairs);
+  // Pairs hidden after bulk-archive — excluded from charts/balances by default
+  const hiddenPairs = useMemo(
+    () => activePairs.filter((p) => p.hidden === true),
+    [activePairs]
+  );
+  const visiblePairs = useMemo(
+    () => activePairs.filter((p) => !p.hidden),
+    [activePairs]
+  );
 
   const [showModal, setShowModal] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [period, setPeriod] = useState<Period>("30D");
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
+  const [showArchived, setShowArchived] = useState(false);
+
+  // Always subscribe to ALL active pairs so the Show Archived toggle can
+  // include hidden pairs' data in charts without remounting listeners.
+  const { transactions: rawTransactions } = useAllTransactions(activePairs, { includeArchived: showArchived });
+  const { snapshots: rawSnapshots } = useAllBalanceSnapshots(activePairs);
+
+  // displayPairs = the pairs whose data feeds the charts & balance numbers
+  const displayPairs = useMemo(
+    () => (showArchived ? activePairs : visiblePairs),
+    [showArchived, activePairs, visiblePairs]
+  );
+  const displayPairIds = useMemo(
+    () => new Set(displayPairs.map((p) => p.id)),
+    [displayPairs]
+  );
+  const transactions = useMemo(
+    () => rawTransactions.filter((tx) => displayPairIds.has(tx.pairId)),
+    [rawTransactions, displayPairIds]
+  );
+  const snapshots = useMemo(
+    () => rawSnapshots.filter((s) => displayPairIds.has(s.pairId)),
+    [rawSnapshots, displayPairIds]
+  );
 
   // ── Pending transactions that need the current user's action ──
   const pendingActionTxs = useMemo(
@@ -54,7 +86,7 @@ export default function DashboardPage() {
     [transactions, user]
   );
 
-  const { owedToMe, iOwe } = activePairs.reduce(
+  const { owedToMe, iOwe } = displayPairs.reduce(
     (acc, pair) => {
       const idx = pair.users.indexOf(user!.uid);
       const bal = idx === 0 ? pair.balance : -pair.balance;
@@ -83,7 +115,7 @@ export default function DashboardPage() {
     }
     if (searchText.trim()) {
       const q = searchText.toLowerCase().trim();
-      const pairById = Object.fromEntries(activePairs.map((p) => [p.id, p]));
+      const pairById = Object.fromEntries(displayPairs.map((p) => [p.id, p]));
       result = result.filter((tx) => {
         if (tx.description?.toLowerCase().includes(q)) return true;
         if (tx.type.toLowerCase().includes(q)) return true;
@@ -100,7 +132,7 @@ export default function DashboardPage() {
       });
     }
     return result;
-  }, [transactions, filters, activePairs, user]);
+  }, [transactions, filters, displayPairs, user]);
 
   // ── Filtered pairs for card view ──
   const filteredPairs = useMemo(() => {
@@ -111,13 +143,13 @@ export default function DashboardPage() {
       pairFilter !== "all" ||
       searchText.trim() !== "";
 
-    if (!isAnyFilterActive) return activePairs;
+    if (!isAnyFilterActive) return displayPairs;
 
     const matchedPairIds = new Set(filteredTransactions.map((tx) => tx.pairId));
 
     if (searchText.trim()) {
       const q = searchText.toLowerCase().trim();
-      activePairs.forEach((pair) => {
+      displayPairs.forEach((pair) => {
         const idx = user ? pair.users.indexOf(user.uid) : -1;
         const partnerName = idx !== -1 ? pair.userNames[idx === 0 ? 1 : 0] : "";
         const partnerEmail = idx !== -1 ? pair.userEmails[idx === 0 ? 1 : 0] : "";
@@ -130,8 +162,8 @@ export default function DashboardPage() {
       });
     }
 
-    return activePairs.filter((p) => matchedPairIds.has(p.id));
-  }, [activePairs, filteredTransactions, filters, user]);
+    return displayPairs.filter((p) => matchedPairIds.has(p.id));
+  }, [displayPairs, filteredTransactions, filters, user]);
 
   async function handleAcceptInvite(invite: (typeof pendingInvites)[0]) {
     try {
@@ -139,6 +171,15 @@ export default function DashboardPage() {
       toast.success(`Connected with ${invite.fromName}!`);
     } catch (err: any) {
       toast.error(err.message || "Failed to accept invite");
+    }
+  }
+
+  async function handleRestorePair(pairId: string) {
+    try {
+      await unhidePair(pairId);
+      toast.success("Balance restored to dashboard");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to restore");
     }
   }
 
@@ -215,7 +256,20 @@ export default function DashboardPage() {
 
       {activePairs.length > 0 && (
         <>
+          {/* ── "All resolved" state: all pairs are archived ── */}
+          {!showArchived && visiblePairs.length === 0 && hiddenPairs.length > 0 && (
+            <div className="text-center py-10 space-y-3">
+              <p className="text-gray-500 font-medium">All your balances are resolved.</p>
+              <button
+                onClick={() => setShowArchived(true)}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Show {hiddenPairs.length} archived balance{hiddenPairs.length === 1 ? "" : "s"}
+              </button>
+            </div>
+          )}
           {/* ── Hero Chart ── */}
+          {displayPairs.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-1">
             <div className="flex items-center justify-between">
               <div>
@@ -245,14 +299,16 @@ export default function DashboardPage() {
             </div>
             <NetBalanceTrendChart
               snapshots={snapshots}
-              pairs={activePairs}
+              pairs={displayPairs}
               currency={currency}
               period={period}
               onPeriodChange={setPeriod}
             />
           </div>
+          )}
 
           {/* ── Stats + Activity Row ── */}
+          {displayPairs.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
@@ -283,14 +339,27 @@ export default function DashboardPage() {
               />
             </div>
           </div>
+          )}
 
           {/* ── Active Balances ── */}
+          {displayPairs.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-                Active Balances
+                {showArchived ? "All Balances" : "Active Balances"}
               </h2>
-              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              <div className="flex items-center gap-2">
+                {hiddenPairs.length > 0 && (
+                  <button
+                    onClick={() => setShowArchived((v) => !v)}
+                    className="text-xs text-gray-500 hover:text-gray-800 underline underline-offset-2"
+                  >
+                    {showArchived
+                      ? "Hide archived"
+                      : `Show archived (${hiddenPairs.length})`}
+                  </button>
+                )}
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setViewMode("cards")}
                   className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
@@ -312,12 +381,13 @@ export default function DashboardPage() {
                   Table
                 </button>
               </div>
+              </div>
             </div>
 
             <DashboardFilterBar
               filters={filters}
               onChange={setFilters}
-              pairs={activePairs}
+              pairs={displayPairs}
               totalCount={transactions.length}
               filteredCount={filteredTransactions.length}
             />
@@ -326,7 +396,24 @@ export default function DashboardPage() {
               filteredPairs.length > 0 ? (
                 <div className="space-y-2">
                   {filteredPairs.map((pair) => (
-                    <PairCard key={pair.id} pair={pair} />
+                    <div key={pair.id} className="relative">
+                      <PairCard pair={pair} />
+                      {pair.hidden && (
+                        <div className="absolute top-2 right-12 flex items-center gap-1.5 pointer-events-none">
+                          <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium">
+                            archived
+                          </span>
+                        </div>
+                      )}
+                      {pair.hidden && (
+                        <button
+                          onClick={() => handleRestorePair(pair.id)}
+                          className="absolute top-2 right-2 text-[10px] text-blue-600 hover:underline font-medium z-10"
+                        >
+                          Restore
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -343,11 +430,14 @@ export default function DashboardPage() {
             ) : (
               <TransactionTable
                 transactions={filteredTransactions}
-                pairs={activePairs}
+                pairs={displayPairs}
                 hideStatusFilter
               />
             )}
           </div>
+          )}
+
+          {/* ── Archived Pairs (shown inline above when showArchived=true) ── */}
         </>
       )}
 

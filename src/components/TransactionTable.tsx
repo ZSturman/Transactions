@@ -13,6 +13,8 @@ interface TransactionTableProps {
   pairs: Pair[];
   onApprove?: (tx: Transaction) => void;
   onDispute?: (tx: Transaction, reason: string, proposedAmount?: number) => void;
+  onArchive?: (tx: Transaction & { pairId?: string }) => void;
+  onUnarchive?: (tx: Transaction & { pairId?: string }) => void;
   /** When true, hides the internal status filter pills (e.g. when parent manages filtering) */
   hideStatusFilter?: boolean;
 }
@@ -36,8 +38,11 @@ export default function TransactionTable({
   pairs,
   onApprove,
   onDispute,
+  onArchive,
+  onUnarchive,
   hideStatusFilter = false,
 }: TransactionTableProps) {
+  void onDispute;
   const { user } = useAuth();
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -182,6 +187,11 @@ export default function TransactionTable({
               <SortHeader label="Type" colKey="type" />
               <SortHeader label="Amount" colKey="amount" />
               <SortHeader label="Status" colKey="status" />
+              {(onArchive || onUnarchive) && (
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Actions
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -215,7 +225,7 @@ export default function TransactionTable({
                     isPending
                       ? "bg-amber-50 hover:bg-amber-100"
                       : "hover:bg-gray-50"
-                  }`}
+                  } ${tx.archived ? "opacity-60" : ""}`}
                 >
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
                     {dateStr}
@@ -262,7 +272,35 @@ export default function TransactionTable({
                         Approve
                       </button>
                     )}
+                    {tx.archived && (
+                      <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded-full font-medium bg-gray-200 text-gray-600">
+                        archived
+                      </span>
+                    )}
                   </td>
+                  {(onArchive || onUnarchive) && (
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      {tx.status === "approved" && (
+                        tx.archived
+                          ? onUnarchive && (
+                              <button
+                                onClick={() => onUnarchive(tx)}
+                                className="text-xs text-blue-600 hover:underline"
+                              >
+                                Unarchive
+                              </button>
+                            )
+                          : onArchive && (
+                              <button
+                                onClick={() => onArchive(tx)}
+                                className="text-xs text-gray-500 hover:text-gray-800 hover:underline"
+                              >
+                                Archive
+                              </button>
+                            )
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}

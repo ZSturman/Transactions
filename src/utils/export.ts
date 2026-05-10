@@ -67,7 +67,8 @@ export function exportPairToCsv(
 ) {
   const userIdx = pair.users.indexOf(currentUserUid);
   const partnerName = pair.userNames[userIdx === 0 ? 1 : 0];
-  const rows = buildRows(transactions, pair, partnerName);
+  const visible = transactions.filter((t) => t.archived !== true);
+  const rows = buildRows(visible, pair, partnerName);
   const csv = [CSV_HEADER, ...rows].join("\n");
   const safeName = partnerName.replace(/[^a-z0-9]/gi, "_").toLowerCase();
   downloadCsv(`transactions_${safeName}.csv`, csv);
@@ -83,7 +84,9 @@ export function exportAllToCsv(
   for (const pair of pairs) {
     const userIdx = pair.users.indexOf(currentUserUid);
     const partnerName = pair.userNames[userIdx === 0 ? 1 : 0];
-    const txs = transactionsByPairId[pair.id] ?? [];
+    const txs = (transactionsByPairId[pair.id] ?? []).filter(
+      (t) => t.archived !== true
+    );
     allRows.push(...buildRows(txs, pair, partnerName));
   }
 

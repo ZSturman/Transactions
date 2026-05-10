@@ -8,7 +8,11 @@ import {
 import { db } from "@/lib/firebase";
 import { Transaction } from "@/types";
 
-export function useTransactions(pairId: string | undefined) {
+export function useTransactions(
+  pairId: string | undefined,
+  options: { includeArchived?: boolean } = {}
+) {
+  const { includeArchived = false } = options;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,12 +30,15 @@ export function useTransactions(pairId: string | undefined) {
 
     const unsub = onSnapshot(q, (snap) => {
       const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Transaction));
-      setTransactions(items);
+      const filtered = includeArchived
+        ? items
+        : items.filter((t) => t.archived !== true);
+      setTransactions(filtered);
       setLoading(false);
     });
 
     return unsub;
-  }, [pairId]);
+  }, [pairId, includeArchived]);
 
   return { transactions, loading };
 }

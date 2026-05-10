@@ -23,6 +23,10 @@ import {
   disputeTransaction,
   acceptCounter,
   rejectCounter,
+  archiveTransaction,
+  unarchiveTransaction,
+  archiveResolvedForPair,
+  hidePair,
 } from "@/utils/transactionActions";
 import BalanceSummary from "@/components/BalanceSummary";
 import TransactionForm from "@/components/TransactionForm";
@@ -32,6 +36,7 @@ import BalanceTrendChart from "@/components/BalanceTrendChart";
 import SettleModal from "@/components/SettleModal";
 import ForgiveModal from "@/components/ForgiveModal";
 import PairOptionsMenu from "@/components/PairOptionsMenu";
+import CsvImportModal from "@/components/CsvImportModal";
 import toast from "react-hot-toast";
 
 type ViewMode = "cards" | "table";
@@ -41,13 +46,15 @@ export default function PairDetailPage() {
   const pairId = params.pairId;
   const { user, profile } = useAuth();
   const { pairs, loading: pairsLoading } = usePairs();
-  const { transactions, loading: txLoading } = useTransactions(pairId);
+  const [showArchived, setShowArchived] = useState(false);
+  const { transactions, loading: txLoading } = useTransactions(pairId, { includeArchived: showArchived });
   const { snapshots } = useBalanceSnapshots(pairId);
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "disputed">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [showForgiveModal, setShowForgiveModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   const pair = pairs.find((p) => p.id === pairId);
 
@@ -191,6 +198,44 @@ export default function PairDetailPage() {
     toast.success("CSV downloaded");
   }
 
+  async function handleArchive(tx: Transaction) {
+    try {
+      await archiveTransaction(pair!.id, tx.id);
+      toast.success("Transaction archived");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to archive");
+    }
+  }
+
+  async function handleUnarchive(tx: Transaction) {
+    try {
+      await unarchiveTransaction(pair!.id, tx.id);
+      toast.success("Transaction restored");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to unarchive");
+    }
+  }
+
+  async function handleArchiveAllResolved() {
+    if (!confirm("Archive all approved transactions for this balance? You can restore them later from the archive view.")) return;
+    try {
+      const count = await archiveResolvedForPair(pair!.id, transactions);
+      if (count === 0) toast("Nothing to archive");
+      else toast.success(`Archived ${count} transaction${count === 1 ? "" : "s"}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to archive");
+    }
+  }
+
+  async function handleHidePair() {
+    try {
+      await hidePair(pair!.id);
+      toast.success("Account hidden from dashboard");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to hide");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Link href="/" className="text-sm text-gray-500 hover:text-blue-600 transition-colors">
@@ -239,13 +284,45 @@ export default function PairDetailPage() {
         </button>
       )}
 
+      {/* Archive resolved transactions when settled (balance is zero) */}
+      {pair.balance === 0 &&
+        transactions.some((t) => t.status === "approved") && (
+          <button
+            onClick={handleArchiveAllResolved}
+            className="btn-primary w-full text-sm"
+          >
+            Archive resolved transactions
+          </button>
+        )}
+
+      {/* Hide from dashboard when balance is zero and all transactions are already archived */}
+      {pair.balance === 0 &&
+        !pair.hidden &&
+        !transactions.some((t) => t.status === "approved") && (
+          <button
+            onClick={handleHidePair}
+            className="btn-secondary w-full text-sm"
+          >
+            Mark as resolved &amp; hide from dashboard
+          </button>
+        )}
+
       {/* Add transaction */}
       {showForm ? (
         <TransactionForm pair={pair} onClose={() => setShowForm(false)} />
       ) : (
-        <button onClick={() => setShowForm(true)} className="btn-primary w-full text-sm">
-          + Transaction
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowForm(true)} className="btn-primary flex-1 text-sm">
+            + Transaction
+          </button>
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="btn-secondary text-sm px-4"
+            title="Import transactions from a CSV file"
+          >
+            Import CSV
+          </button>
+        </div>
       )}
 
       {/* Filter tabs + view toggle */}
@@ -269,7 +346,16 @@ export default function PairDetailPage() {
           ))}
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2 items-center">
+          <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Show archived
+          </label>
           <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setViewMode("cards")}
@@ -296,6 +382,8 @@ export default function PairDetailPage() {
           onDispute={handleDispute}
           onAcceptCounter={handleAcceptCounter}
           onRejectCounter={handleRejectCounter}
+          onArchive={handleArchive}
+          onUnarchive={handleUnarchive}
         />
       ) : (
         <TransactionTable
@@ -303,6 +391,8 @@ export default function PairDetailPage() {
           pairs={[pair]}
           onApprove={handleApprove}
           onDispute={handleDispute}
+          onArchive={handleArchive}
+          onUnarchive={handleUnarchive}
         />
       )}
 
@@ -319,6 +409,14 @@ export default function PairDetailPage() {
           pair={pair}
           onConfirm={handleForgive}
           onClose={() => setShowForgiveModal(false)}
+        />
+      )}
+
+      {showImportModal && (
+        <CsvImportModal
+          pair={pair}
+          userId={user.uid}
+          onClose={() => setShowImportModal(false)}
         />
       )}
     </div>

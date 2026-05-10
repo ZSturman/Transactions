@@ -5,6 +5,8 @@ import {
   serverTimestamp,
   addDoc,
   collection,
+  writeBatch,
+  deleteField,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Pair, Transaction, UserProfile } from "@/types";
@@ -164,5 +166,91 @@ export async function rejectCounter(pair: Pair, tx: Transaction): Promise<void> 
   await updateDoc(doc(db, "pairs", pair.id, "transactions", tx.id), {
     proposedAmount: null,
     status: "disputed",
+  });
+}
+
+// ─── Archive helpers ─────────────────────────────────────
+// Archiving is purely a display flag: it does not change the pair balance,
+// and no balance snapshot is written. Archived transactions are hidden from
+// default lists, dashboards, charts, and exports but can be restored.
+
+export async function archiveTransaction(
+  pairId: string,
+  txId: string
+): Promise<void> {
+  await updateDoc(doc(db, "pairs", pairId, "transactions", txId), {
+    archived: true,
+    archivedAt: serverTimestamp(),
+  });
+}
+
+export async function unarchiveTransaction(
+  pairId: string,
+  txId: string
+): Promise<void> {
+  await updateDoc(doc(db, "pairs", pairId, "transactions", txId), {
+    archived: false,
+    archivedAt: deleteField(),
+  });
+}
+
+/**
+ * Bulk-archive every approved (non-archived) transaction for a pair.
+ * Intended for use after a debt is settled/forgiven and the pair balance is 0.
+ * Writes are split into batches to stay under Firestore's 500-op limit.
+ * Also marks the pair as hidden so it disappears from the dashboard.
+ */
+export async function archiveResolvedForPair(
+  pairId: string,
+  transactions: Transaction[]
+): Promise<number> {
+  const candidates = transactions.filter(
+    (t) => t.status === "approved" && t.archived !== true
+  );
+  if (candidates.length === 0) return 0;
+
+  const CHUNK = 450;
+  for (let i = 0; i < candidates.length; i += CHUNK) {
+    const slice = candidates.slice(i, i + CHUNK);
+    const batch = writeBatch(db);
+    for (const tx of slice) {
+      batch.update(doc(db, "pairs", pairId, "transactions", tx.id), {
+        archived: true,
+        archivedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
+
+  // Mark the pair as hidden so it disappears from the dashboard
+  await updateDoc(doc(db, "pairs", pairId), {
+    hidden: true,
+    hiddenAt: serverTimestamp(),
+  });
+
+  return candidates.length;
+}
+
+/**
+ * Restore a pair to the dashboard (undo the hidden flag).
+ * Individual archived transactions remain archived; use the pair page's
+ * "Show archived" toggle + Unarchive to restore them.
+ */
+export async function unhidePair(pairId: string): Promise<void> {
+  await updateDoc(doc(db, "pairs", pairId), {
+    hidden: false,
+    hiddenAt: deleteField(),
+  });
+}
+
+/**
+ * Mark a pair as hidden from the dashboard without archiving any transactions.
+ * Use when all transactions have already been individually archived and the
+ * bulk "Archive resolved" button is no longer shown.
+ */
+export async function hidePair(pairId: string): Promise<void> {
+  await updateDoc(doc(db, "pairs", pairId), {
+    hidden: true,
+    hiddenAt: serverTimestamp(),
   });
 }

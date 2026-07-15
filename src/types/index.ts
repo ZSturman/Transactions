@@ -7,10 +7,23 @@ export interface UserProfile {
   displayName: string;
   photoURL: string;
   currency: string;
+  notificationPreferences?: NotificationPreferences;
   createdAt: Timestamp;
   deleted?: boolean;
   deletedAt?: Timestamp;
 }
+
+export interface NotificationPreferences {
+  /** Email when a partner records a transaction that needs review. */
+  transactionEmails: boolean;
+  /** Email when a transaction is approved or disputed. */
+  activityEmails: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  transactionEmails: true,
+  activityEmails: true,
+};
 
 // ─── Pairs ──────────────────────────────────────────────
 export interface Pair {
@@ -47,6 +60,9 @@ export interface Transaction {
   resolvedAt?: Timestamp;
   archived?: boolean;                 // soft-archive: hidden from default views
   archivedAt?: Timestamp;
+  /** Stable key used to skip duplicate rows in CSV imports. */
+  importFingerprint?: string;
+  importBatchId?: string;
 }
 
 // ─── Balance Snapshots ──────────────────────────────────
@@ -78,6 +94,9 @@ export interface Invite {
   status: InviteStatus;
   pendingTransaction?: PendingTransaction;
   createdAt: Timestamp;
+  expiresAt?: Timestamp;
+  acceptedAt?: Timestamp;
+  acceptedBy?: string;
 }
 
 // ─── Currencies (subset for the picker) ─────────────────

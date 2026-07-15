@@ -188,6 +188,20 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleCopyInviteLink(pair: Pair) {
+    const invite = sentInvites.find((item) => item.pairId === pair.id);
+    if (!invite) {
+      toast.error("This invitation link is no longer available");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/invite/${invite.id}`);
+      toast.success("Invitation link copied");
+    } catch {
+      toast.error("Couldn't copy the invitation link");
+    }
+  }
+
   async function handleCancelTransaction(pairId: string, txId: string) {
     try {
       await cancelTransaction(pairId, txId);
@@ -519,6 +533,12 @@ export default function DashboardPage() {
                       className="text-xs btn-primary px-3 py-1"
                     >
                       + Request
+                    </button>
+                    <button
+                      onClick={() => handleCopyInviteLink(pair)}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      Copy link
                     </button>
                     <button
                       onClick={() => handleCancelInvite(pair)}

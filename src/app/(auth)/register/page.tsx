@@ -1,20 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";;
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { CURRENCIES } from "@/types";
 import toast from "react-hot-toast";
 
 export default function RegisterPage() {
+  return <Suspense fallback={null}><RegisterForm /></Suspense>;
+}
+
+function RegisterForm() {
   const { signUpEmail, signInGoogle } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
+  const invitationEmail = searchParams.get("email")?.trim().toLowerCase() ?? "";
+  const [email, setEmail] = useState(invitationEmail);
   const [password, setPassword] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [loading, setLoading] = useState(false);
+  const continueTo = searchParams.get("continue");
+  const destination = continueTo?.startsWith("/invite/") ? continueTo : "/";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -25,7 +33,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await signUpEmail(email, password, displayName, currency);
-      router.push("/");
+      router.push(destination);
     } catch (err: any) {
       toast.error(err.message || "Failed to create account");
     } finally {
@@ -37,7 +45,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await signInGoogle();
-      router.push("/");
+      router.push(destination);
     } catch (err: any) {
       toast.error(err.message || "Google sign-in failed");
     } finally {
@@ -134,7 +142,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-gray-500 mt-4">
           Already have an account?{" "}
-          <Link href="/login" className="text-blue-600 hover:underline font-medium">
+          <Link href={continueTo ? `/login?continue=${encodeURIComponent(continueTo)}${invitationEmail ? `&email=${encodeURIComponent(invitationEmail)}` : ""}` : "/login"} className="text-blue-600 hover:underline font-medium">
             Sign in
           </Link>
         </p>

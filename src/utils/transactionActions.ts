@@ -10,8 +10,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Pair, Transaction, UserProfile } from "@/types";
-import { formatAmount } from "@/utils/currency";
+import { Pair, Transaction } from "@/types";
 import { sendResolvedEmail } from "@/lib/email";
 
 async function writeBalanceSnapshot(
@@ -28,38 +27,32 @@ async function writeBalanceSnapshot(
   });
 }
 
-function getPartnerInfo(pair: Pair, userId: string) {
-  const idx = pair.users.indexOf(userId);
-  const partnerIdx = idx === 0 ? 1 : 0;
-  return {
-    partnerEmail: pair.userEmails[partnerIdx],
-    partnerName: pair.userNames[partnerIdx],
-    userIdx: idx,
-  };
-}
-
 export async function approveTransaction(
   pair: Pair,
   tx: Transaction,
-  userId: string,
-  userDisplayName: string,
-  origin: string
+  userId: string
 ): Promise<void> {
-  const { partnerEmail, partnerName } = getPartnerInfo(pair, userId);
   let newBalance = 0;
 
   await runTransaction(db, async (firestoreTransaction) => {
     const pairRef = doc(db, "pairs", pair.id);
-    const pairSnap = await firestoreTransaction.get(pairRef);
-    if (!pairSnap.exists()) throw new Error("Pair not found");
+    const txRef = doc(db, "pairs", pair.id, "transactions", tx.id);
+    const [pairSnap, txSnap] = await Promise.all([
+      firestoreTransaction.get(pairRef),
+      firestoreTransaction.get(txRef),
+    ]);
+    if (!pairSnap.exists() || !txSnap.exists()) throw new Error("Transaction not found");
+    const currentTx = txSnap.data() as Transaction;
+    if (currentTx.status !== "pending") throw new Error("This transaction has already been resolved");
+    if (currentTx.createdBy === userId) throw new Error("Only your partner can approve this transaction");
 
     const pairData = pairSnap.data();
-    const creatorIdx = pairData.users.indexOf(tx.createdBy);
+    const creatorIdx = pairData.users.indexOf(currentTx.createdBy);
     let balanceDelta = 0;
-    if (tx.type === "payment") {
-      balanceDelta = creatorIdx === 0 ? tx.amount : -tx.amount;
+    if (currentTx.type === "payment") {
+      balanceDelta = creatorIdx === 0 ? currentTx.amount : -currentTx.amount;
     } else {
-      balanceDelta = creatorIdx === 0 ? -tx.amount : tx.amount;
+      balanceDelta = creatorIdx === 0 ? -currentTx.amount : currentTx.amount;
     }
     newBalance = (pairData.balance || 0) + balanceDelta;
 
@@ -68,59 +61,43 @@ export async function approveTransaction(
       updatedAt: serverTimestamp(),
     });
     firestoreTransaction.update(
-      doc(db, "pairs", pair.id, "transactions", tx.id),
+      txRef,
       { status: "approved", resolvedAt: serverTimestamp() }
     );
   });
 
   await writeBalanceSnapshot(pair.id, newBalance, "transaction approved", userId);
 
-  await sendResolvedEmail({
-    to_email: partnerEmail,
-    to_name: partnerName,
-    from_name: userDisplayName,
-    subject: `Transaction approved: ${formatAmount(tx.amount, pair.currency)}`,
-    message: `${userDisplayName} approved the transaction of ${formatAmount(
-      tx.amount,
-      pair.currency
-    )}${tx.description ? ` for "${tx.description}"` : ""}. The balance has been updated.`,
-    action_url: `${origin}/pair/${pair.id}`,
-  });
+  await sendResolvedEmail(pair.id, tx.id);
 }
 
 export async function disputeTransaction(
   pair: Pair,
   tx: Transaction,
   userId: string,
-  userDisplayName: string,
   reason: string,
-  proposedAmount: number | undefined,
-  origin: string
+  proposedAmount: number | undefined
 ): Promise<void> {
-  const update: Record<string, unknown> = {
-    status: "disputed",
-    disputeReason: reason,
-    resolvedAt: serverTimestamp(),
-  };
-  if (proposedAmount !== undefined) update.proposedAmount = proposedAmount;
-
-  await updateDoc(doc(db, "pairs", pair.id, "transactions", tx.id), update);
-
-  const creatorIdx = pair.users.indexOf(tx.createdBy);
-  await sendResolvedEmail({
-    to_email: pair.userEmails[creatorIdx],
-    to_name: pair.userNames[creatorIdx],
-    from_name: userDisplayName,
-    subject: `Transaction disputed: ${formatAmount(tx.amount, pair.currency)}`,
-    message: `Your transaction of ${formatAmount(tx.amount, pair.currency)}${
-      tx.description ? ` for "${tx.description}"` : ""
-    } was disputed. Reason: "${reason}"${
-      proposedAmount !== undefined
-        ? `. Counter-proposed amount: ${formatAmount(proposedAmount, pair.currency)}`
-        : ""
-    }`,
-    action_url: `${origin}/pair/${pair.id}`,
+  if (!reason.trim()) throw new Error("Provide a reason for the dispute");
+  if (proposedAmount !== undefined && (!Number.isFinite(proposedAmount) || proposedAmount <= 0)) {
+    throw new Error("Enter a valid counter-proposal amount");
+  }
+  await runTransaction(db, async (firestoreTransaction) => {
+    const txRef = doc(db, "pairs", pair.id, "transactions", tx.id);
+    const txSnap = await firestoreTransaction.get(txRef);
+    if (!txSnap.exists()) throw new Error("Transaction not found");
+    const currentTx = txSnap.data() as Transaction;
+    if (currentTx.status !== "pending") throw new Error("This transaction has already been resolved");
+    if (currentTx.createdBy === userId) throw new Error("Only your partner can dispute this transaction");
+    const update: Record<string, unknown> = {
+      status: "disputed",
+      disputeReason: reason.trim().slice(0, 500),
+      resolvedAt: serverTimestamp(),
+    };
+    if (proposedAmount !== undefined) update.proposedAmount = proposedAmount;
+    firestoreTransaction.update(txRef, update);
   });
+  await sendResolvedEmail(pair.id, tx.id);
 }
 
 export async function acceptCounter(
@@ -133,16 +110,24 @@ export async function acceptCounter(
 
   await runTransaction(db, async (firestoreTransaction) => {
     const pairRef = doc(db, "pairs", pair.id);
-    const pairSnap = await firestoreTransaction.get(pairRef);
-    if (!pairSnap.exists()) throw new Error("Pair not found");
+    const txRef = doc(db, "pairs", pair.id, "transactions", tx.id);
+    const [pairSnap, txSnap] = await Promise.all([
+      firestoreTransaction.get(pairRef),
+      firestoreTransaction.get(txRef),
+    ]);
+    if (!pairSnap.exists() || !txSnap.exists()) throw new Error("Transaction not found");
+    const currentTx = txSnap.data() as Transaction;
+    if (currentTx.status !== "disputed" || currentTx.proposedAmount === undefined) {
+      throw new Error("This counter-proposal is no longer available");
+    }
 
     const pairData = pairSnap.data();
-    const creatorIdx = pairData.users.indexOf(tx.createdBy);
+    const creatorIdx = pairData.users.indexOf(currentTx.createdBy);
     let balanceDelta = 0;
-    if (tx.type === "payment") {
-      balanceDelta = creatorIdx === 0 ? tx.proposedAmount! : -tx.proposedAmount!;
+    if (currentTx.type === "payment") {
+      balanceDelta = creatorIdx === 0 ? currentTx.proposedAmount : -currentTx.proposedAmount;
     } else {
-      balanceDelta = creatorIdx === 0 ? -tx.proposedAmount! : tx.proposedAmount!;
+      balanceDelta = creatorIdx === 0 ? -currentTx.proposedAmount : currentTx.proposedAmount;
     }
     newBalance = (pairData.balance || 0) + balanceDelta;
 
@@ -151,9 +136,9 @@ export async function acceptCounter(
       updatedAt: serverTimestamp(),
     });
     firestoreTransaction.update(
-      doc(db, "pairs", pair.id, "transactions", tx.id),
+      txRef,
       {
-        amount: tx.proposedAmount,
+        amount: currentTx.proposedAmount,
         status: "approved",
         resolvedAt: serverTimestamp(),
       }

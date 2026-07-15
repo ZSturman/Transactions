@@ -1,88 +1,146 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isMember(pair) {
+      return signedIn() && request.auth.uid in pair.users;
+    }
+
+    function isMemberAfter(pairId) {
+      return signedIn()
+        && request.auth.uid in getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+    }
+
+    function inviteHasNotExpired(invite) {
+      // Existing invitations created before expirations were introduced remain
+      // usable; every new invitation must carry a short-lived expiresAt value.
+      return !invite.keys().hasAll(['expiresAt']) || request.time < invite.expiresAt;
+    }
+
+    function recipientCompletesPendingPair() {
+      return signedIn()
+        && resource.data.status == 'pending'
+        && request.auth.token.email == resource.data.userEmails[1]
+        && request.resource.data.status == 'active'
+        && request.resource.data.users[0] == resource.data.users[0]
+        && request.resource.data.users[1] == request.auth.uid
+        && request.resource.data.userEmails[0] == resource.data.userEmails[0]
+        && request.resource.data.userEmails[1] == request.auth.token.email
+        && request.resource.data.userNames[0] == resource.data.userNames[0]
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['users', 'userEmails', 'userNames', 'status', 'updatedAt']);
+    }
+
+    function memberUpdatesActivePair() {
+      return isMember(resource.data)
+        && resource.data.status == 'active'
+        && request.resource.data.status == 'active'
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.userEmails == resource.data.userEmails
+        && request.resource.data.userNames == resource.data.userNames
+        && request.resource.data.currency == resource.data.currency
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['balance', 'updatedAt', 'hidden', 'hiddenAt', 'deletedUsers']);
+    }
 
     // ─── Users ──────────────────────────────────────────
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && request.auth.uid == userId;
     }
 
     // ─── Pairs ──────────────────────────────────────────
     match /pairs/{pairId} {
-      // Only paired users can read
-      allow read: if request.auth != null
+      allow read: if signedIn()
         && (request.auth.uid in resource.data.users
             || request.auth.token.email in resource.data.userEmails);
 
-      // Authenticated users can create a pair (they must be users[0])
-      allow create: if request.auth != null
-        && request.auth.uid == request.resource.data.users[0];
+      // A new pending pair has one authenticated sender and one empty slot.
+      allow create: if signedIn()
+        && request.auth.uid == request.resource.data.users[0]
+        && request.auth.token.email == request.resource.data.userEmails[0]
+        && request.resource.data.users[1] == ''
+        && request.resource.data.status == 'pending';
 
-      // Only paired users can update
-      allow update: if request.auth != null
-        && (request.auth.uid in resource.data.users
-            || request.auth.token.email in resource.data.userEmails);
+      allow update: if recipientCompletesPendingPair() || memberUpdatesActivePair();
 
-      // Sender (users[0]) can delete a pending pair (cancel invite)
-      allow delete: if request.auth != null
-        && resource.data.status == "pending"
+      allow delete: if signedIn()
+        && resource.data.status == 'pending'
         && request.auth.uid == resource.data.users[0];
 
-      // ─── Transactions (subcollection) ─────────────────
       match /transactions/{txId} {
-        // Only paired users can read
-        allow read: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+        allow read: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data);
 
-        // Any paired user can create a transaction, attributed to either member
-        allow create: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users
-          && request.resource.data.createdBy in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+        // getAfter permits the invitation acceptance transaction to activate a
+        // pair and create its queued transaction atomically.
+        allow create: if isMemberAfter(pairId)
+          && request.resource.data.createdBy
+            in getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.users
+          && request.resource.data.pairId == pairId
+          && (
+            request.resource.data.status == 'pending'
+            || (
+              request.resource.data.status == 'approved'
+              && request.resource.data.createdBy == request.auth.uid
+              && request.resource.data.type in ['settlement', 'forgiveness']
+            )
+          );
 
-        // Any paired user can update status (approve/dispute)
-        allow update: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+        allow update: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
+          && request.resource.data.pairId == resource.data.pairId
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.createdAt == resource.data.createdAt;
 
-        // Creator can hard-delete their own pending transaction
-        allow delete: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users
+        allow delete: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
           && resource.data.createdBy == request.auth.uid
-          && resource.data.status == "pending";
+          && resource.data.status == 'pending';
       }
 
-      // ─── Balance Snapshots (subcollection) ────────────
       match /balanceSnapshots/{snapId} {
-        // Only paired users can read
-        allow read: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
-
-        // Any paired user can create a snapshot
-        allow create: if request.auth != null
-          && request.auth.uid in get(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+        allow read: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data);
+        allow create: if isMember(getAfter(/databases/$(database)/documents/pairs/$(pairId)).data);
       }
     }
 
-    // ─── Invites ────────────────────────────────────────
+    // ─── Invites ─────────────────────────────────────────
     match /invites/{inviteId} {
-      // Creator can read their sent invites
-      allow read: if request.auth != null
+      allow read: if signedIn()
         && (resource.data.fromUid == request.auth.uid
             || resource.data.toEmail == request.auth.token.email);
 
-      // Any authenticated user can create an invite
-      allow create: if request.auth != null
-        && request.resource.data.fromUid == request.auth.uid;
+      // The pair and invitation are written together, binding the email in
+      // both records. The application sets an expiration no more than 8 days
+      // away (7 days in the UI) to tolerate small client clock differences.
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toEmail != request.auth.token.email
+        && request.resource.data.status == 'pending'
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(8, 'd')
+        && getAfter(/databases/$(database)/documents/pairs/$(request.resource.data.pairId)).data.users[0] == request.auth.uid
+        && getAfter(/databases/$(database)/documents/pairs/$(request.resource.data.pairId)).data.users[1] == ''
+        && getAfter(/databases/$(database)/documents/pairs/$(request.resource.data.pairId)).data.userEmails[1] == request.resource.data.toEmail
+        && getAfter(/databases/$(database)/documents/pairs/$(request.resource.data.pairId)).data.status == 'pending';
 
-      // Recipient can accept (update status)
-      allow update: if request.auth != null
-        && resource.data.toEmail == request.auth.token.email;
+      allow update: if signedIn()
+        && resource.data.status == 'pending'
+        && inviteHasNotExpired(resource.data)
+        && resource.data.toEmail == request.auth.token.email
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.acceptedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'acceptedBy', 'acceptedAt']);
 
-      // Sender can delete (cancel) a pending invite
-      allow delete: if request.auth != null
+      allow delete: if signedIn()
         && resource.data.fromUid == request.auth.uid
-        && resource.data.status == "pending";
+        && resource.data.status == 'pending';
     }
+
+    // notificationDeliveries are server-only audit/idempotency records.
   }
 }

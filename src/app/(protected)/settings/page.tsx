@@ -6,8 +6,8 @@ import { doc, updateDoc, getDocs, collection } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePairs } from "@/hooks/usePairs";
-import { CURRENCIES } from "@/types";
-import { exportAllToCsv } from "@/utils/export";
+import { CURRENCIES, DEFAULT_NOTIFICATION_PREFERENCES, NotificationPreferences } from "@/types";
+import { exportAllToCsv, exportAllToJson } from "@/utils/export";
 import toast from "react-hot-toast";
 
 export default function SettingsPage() {
@@ -16,6 +16,9 @@ export default function SettingsPage() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState(profile?.displayName || "");
   const [currency, setCurrency] = useState(profile?.currency || "USD");
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(
+    profile?.notificationPreferences ?? DEFAULT_NOTIFICATION_PREFERENCES
+  );
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showDanger, setShowDanger] = useState(false);
@@ -27,7 +30,7 @@ export default function SettingsPage() {
     if (!user) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, "users", user.uid), { displayName, currency });
+      await updateDoc(doc(db, "users", user.uid), { displayName, currency, notificationPreferences });
       await refreshProfile();
       toast.success("Settings saved");
     } catch (err: any) {
@@ -42,25 +45,38 @@ export default function SettingsPage() {
     router.push("/login");
   }
 
-  async function handleExportAll() {
+  async function loadExportData() {
     if (!user) return;
     setExporting(true);
     try {
-      const activePairs = pairs.filter((p) => p.status === "active");
+      const exportPairs = pairs.filter((p) => p.status === "active" || p.status === "pending");
       const transactionsByPairId: Record<string, any[]> = {};
       await Promise.all(
-        activePairs.map(async (pair) => {
+        exportPairs.map(async (pair) => {
           const snap = await getDocs(collection(db, "pairs", pair.id, "transactions"));
           transactionsByPairId[pair.id] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         })
       );
-      exportAllToCsv(activePairs, transactionsByPairId, user.uid);
-      toast.success("CSV downloaded");
+      return { exportPairs, transactionsByPairId };
     } catch (err: any) {
       toast.error(err.message || "Export failed");
     } finally {
       setExporting(false);
     }
+  }
+
+  async function handleExportCsv() {
+    const data = await loadExportData();
+    if (!data || !user) return;
+    exportAllToCsv(data.exportPairs, data.transactionsByPairId, user.uid);
+    toast.success("CSV downloaded");
+  }
+
+  async function handleExportJson() {
+    const data = await loadExportData();
+    if (!data) return;
+    exportAllToJson(data.exportPairs, data.transactionsByPairId);
+    toast.success("JSON downloaded");
   }
 
   async function handleDeleteAccount() {
@@ -94,6 +110,31 @@ export default function SettingsPage() {
               onChange={(e) => setDisplayName(e.target.value)}
               required
             />
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">Email notifications</h3>
+              <p className="text-xs text-gray-400 mt-1">Invitation emails are always sent. Control nonessential activity emails here.</p>
+            </div>
+            <label className="flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notificationPreferences.transactionEmails}
+                onChange={(event) => setNotificationPreferences((current) => ({ ...current, transactionEmails: event.target.checked }))}
+                className="mt-0.5 rounded border-gray-300"
+              />
+              <span><span className="font-medium text-gray-700">New transaction requests</span><br /><span className="text-xs text-gray-400">When a partner adds a transaction that needs your review.</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notificationPreferences.activityEmails}
+                onChange={(event) => setNotificationPreferences((current) => ({ ...current, activityEmails: event.target.checked }))}
+                className="mt-0.5 rounded border-gray-300"
+              />
+              <span><span className="font-medium text-gray-700">Approvals and disputes</span><br /><span className="text-xs text-gray-400">When your partner resolves a transaction you created.</span></span>
+            </label>
           </div>
 
           <div>
@@ -132,11 +173,12 @@ export default function SettingsPage() {
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Your Data</h2>
         <p className="text-xs text-gray-500 mb-3">
-          Download all your transaction history as a CSV file.
+          Download a flat CSV for spreadsheets or a complete JSON file that preserves pair and transaction IDs, statuses, and relationships. Archived and pending records are included.
         </p>
-        <button onClick={handleExportAll} className="btn-secondary w-full text-sm" disabled={exporting}>
-          {exporting ? "Exporting…" : "Download all transactions (CSV)"}
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={handleExportCsv} className="btn-secondary text-sm" disabled={exporting}>{exporting ? "Exporting…" : "Download CSV"}</button>
+          <button onClick={handleExportJson} className="btn-secondary text-sm" disabled={exporting}>{exporting ? "Exporting…" : "Download JSON"}</button>
+        </div>
       </div>
 
       {/* Account */}

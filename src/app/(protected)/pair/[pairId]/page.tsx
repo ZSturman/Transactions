@@ -16,8 +16,7 @@ import { usePairs } from "@/hooks/usePairs";
 import { useTransactions } from "@/hooks/useTransactions";
 import { useBalanceSnapshots } from "@/hooks/useBalanceSnapshots";
 import { Transaction } from "@/types";
-import { formatAmount } from "@/utils/currency";
-import { exportPairToCsv } from "@/utils/export";
+import { exportPairToCsv, exportPairToJson } from "@/utils/export";
 import {
   approveTransaction,
   disputeTransaction,
@@ -45,7 +44,7 @@ type ViewMode = "cards" | "table";
 export default function PairDetailPage() {
   const params = useParams<{ pairId: string }>();
   const pairId = params.pairId;
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const { pairs, loading: pairsLoading } = usePairs();
   const [showArchived, setShowArchived] = useState(false);
   const { transactions, loading: txLoading } = useTransactions(pairId, { includeArchived: showArchived });
@@ -87,11 +86,9 @@ export default function PairDetailPage() {
   const pendingCount = transactions.filter((t) => t.status === "pending" && t.createdBy !== user.uid).length;
   const filteredTransactions = filter === "all" ? transactions : transactions.filter((t) => t.status === filter);
 
-  const displayName = profile?.displayName || user.email || "";
-
   async function handleApprove(tx: Transaction) {
     try {
-      await approveTransaction(pair!, tx, user!.uid, displayName, window.location.origin);
+      await approveTransaction(pair!, tx, user!.uid);
       toast.success("Transaction approved — balance updated!");
     } catch (err: any) {
       toast.error(err.message || "Failed to approve");
@@ -100,7 +97,7 @@ export default function PairDetailPage() {
 
   async function handleDispute(tx: Transaction, reason: string, proposedAmount?: number) {
     try {
-      await disputeTransaction(pair!, tx, user!.uid, displayName, reason, proposedAmount, window.location.origin);
+      await disputeTransaction(pair!, tx, user!.uid, reason, proposedAmount);
       toast.success("Transaction disputed — creator notified");
     } catch (err: any) {
       toast.error(err.message || "Failed to dispute");
@@ -199,6 +196,11 @@ export default function PairDetailPage() {
     toast.success("CSV downloaded");
   }
 
+  function handleExportJson() {
+    exportPairToJson(transactions, pair!);
+    toast.success("JSON downloaded");
+  }
+
   async function handleArchive(tx: Transaction) {
     try {
       await archiveTransaction(pair!.id, tx.id);
@@ -269,6 +271,7 @@ export default function PairDetailPage() {
           <PairOptionsMenu
             pair={pair}
             onExport={handleExport}
+            onExportJson={handleExportJson}
             onForgive={() => setShowForgiveModal(true)}
           />
         </div>

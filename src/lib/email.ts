@@ -1,38 +1,64 @@
-import type { EmailType } from "@/app/api/send-email/route";
+import { auth } from "@/lib/firebase";
 
-interface EmailParams {
-  to_email: string;
-  to_name: string;
-  from_name: string;
-  subject: string;
-  message: string;
-  action_url?: string;
-}
+export type NotificationResult = {
+  delivered?: boolean;
+  skipped?: boolean;
+  duplicate?: boolean;
+  reason?: string;
+};
 
-async function sendEmail(type: EmailType, params: EmailParams): Promise<void> {
+type NotificationRequest =
+  | { type: "invite"; inviteId: string }
+  | { type: "transaction" | "resolved"; pairId: string; transactionId: string };
+
+/**
+ * The server derives addresses and message content from Firestore after it has
+ * verified the Firebase ID token. Keeping raw email content out of this client
+ * request prevents the endpoint from becoming an open mail relay.
+ */
+async function sendNotification(
+  body: NotificationRequest
+): Promise<NotificationResult> {
   try {
-    const res = await fetch("/api/send-email", {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return { skipped: true, reason: "not_authenticated" };
+
+    const response = await fetch("/api/send-email", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, ...params }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      console.error("[Email] Failed to send:", data.error ?? res.statusText);
+
+    const result = (await response.json().catch(() => ({}))) as NotificationResult;
+    if (!response.ok) {
+      console.error("[Email] Notification was not delivered:", result.reason ?? response.status);
     }
-  } catch (err) {
-    console.error("[Email] Network error:", err);
+    return result;
+  } catch (error) {
+    // A transaction or invitation is already committed at this point. Email is
+    // deliberately best-effort so an outage never loses the user's data.
+    console.error("[Email] Notification request failed:", error);
+    return { skipped: true, reason: "network_error" };
   }
 }
 
-export function sendTransactionEmail(params: EmailParams): Promise<void> {
-  return sendEmail("transaction", params);
+export function sendTransactionEmail(
+  pairId: string,
+  transactionId: string
+): Promise<NotificationResult> {
+  return sendNotification({ type: "transaction", pairId, transactionId });
 }
 
-export function sendResolvedEmail(params: EmailParams): Promise<void> {
-  return sendEmail("resolved", params);
+export function sendResolvedEmail(
+  pairId: string,
+  transactionId: string
+): Promise<NotificationResult> {
+  return sendNotification({ type: "resolved", pairId, transactionId });
 }
 
-export function sendInviteEmail(params: EmailParams): Promise<void> {
-  return sendEmail("invite", params);
+export function sendInviteEmail(inviteId: string): Promise<NotificationResult> {
+  return sendNotification({ type: "invite", inviteId });
 }

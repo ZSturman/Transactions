@@ -1,77 +1,101 @@
 import { Pair, Transaction } from "@/types";
-import { getCurrencySymbol } from "@/utils/currency";
 
-function formatDate(ts: { toDate?: () => Date } | undefined): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toISOString().split("T")[0];
+type TimestampLike = { toDate?: () => Date } | undefined;
+
+function asIso(timestamp: TimestampLike): string {
+  return timestamp?.toDate ? timestamp.toDate().toISOString() : "";
 }
 
-function formatDateTime(ts: { toDate?: () => Date } | undefined): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleString("en-US");
+function asDate(timestamp: TimestampLike): string {
+  return asIso(timestamp).slice(0, 10);
 }
 
-function escapeCsv(val: string | number | undefined): string {
-  if (val === undefined || val === null) return "";
-  const str = String(val);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
+function escapeCsv(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  const string = String(value);
+  return /[",\n]/.test(string) ? `"${string.replace(/"/g, '""')}"` : string;
 }
 
-function buildRows(
-  transactions: Transaction[],
-  pair: Pair,
-  partnerName: string
-): string[] {
-  return transactions.map((tx) => {
-    const eventDate = tx.date?.toDate
-      ? formatDate(tx.date)
-      : formatDate(tx.createdAt);
-    const createdDate = formatDateTime(tx.createdAt);
-    const symbol = getCurrencySymbol(pair.currency);
-    return [
-      escapeCsv(createdDate),
-      escapeCsv(eventDate),
-      escapeCsv(partnerName),
-      escapeCsv(tx.description),
-      escapeCsv(tx.type),
-      escapeCsv(`${symbol}${Math.abs(tx.amount).toFixed(2)}`),
-      escapeCsv(pair.currency),
-      escapeCsv(tx.status),
-      escapeCsv(tx.disputeReason ?? ""),
-    ].join(",");
-  });
-}
-
-const CSV_HEADER =
-  "Created At,Event Date,Person,Description,Type,Amount,Currency,Status,Dispute Reason";
-
-function downloadCsv(filename: string, csvContent: string) {
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+function download(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
   URL.revokeObjectURL(url);
 }
 
-export function exportPairToCsv(
-  transactions: Transaction[],
-  pair: Pair,
-  currentUserUid: string
-) {
-  const userIdx = pair.users.indexOf(currentUserUid);
-  const partnerName = pair.userNames[userIdx === 0 ? 1 : 0];
-  const visible = transactions.filter((t) => t.archived !== true);
-  const rows = buildRows(visible, pair, partnerName);
-  const csv = [CSV_HEADER, ...rows].join("\n");
-  const safeName = partnerName.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-  downloadCsv(`transactions_${safeName}.csv`, csv);
+function partnerFor(pair: Pair, currentUserUid: string) {
+  const index = pair.users.indexOf(currentUserUid);
+  const partnerIndex = index === 0 ? 1 : 0;
+  return {
+    id: pair.users[partnerIndex] || "",
+    name: pair.userNames[partnerIndex] || "",
+    email: pair.userEmails[partnerIndex] || "",
+  };
+}
+
+const CSV_HEADER = [
+  "Transaction ID",
+  "Pair ID",
+  "Partner ID",
+  "Partner Name",
+  "Partner Email",
+  "Pair Status",
+  "Event Date",
+  "Created At",
+  "Created By",
+  "Type",
+  "Amount",
+  "Currency",
+  "Description",
+  "Status",
+  "Dispute Reason",
+  "Proposed Amount",
+  "Archived",
+  "Import Batch ID",
+  "Import Fingerprint",
+].join(",");
+
+function rowsForPair(transactions: Transaction[], pair: Pair, currentUserUid: string) {
+  const partner = partnerFor(pair, currentUserUid);
+  return transactions.map((transaction) => [
+    transaction.id,
+    pair.id,
+    partner.id,
+    partner.name,
+    partner.email,
+    pair.status,
+    asDate(transaction.date ?? transaction.createdAt),
+    asIso(transaction.createdAt),
+    transaction.createdBy,
+    transaction.type,
+    transaction.amount,
+    pair.currency,
+    transaction.description,
+    transaction.status,
+    transaction.disputeReason,
+    transaction.proposedAmount,
+    transaction.archived === true ? "true" : "false",
+    transaction.importBatchId,
+    transaction.importFingerprint,
+  ].map(escapeCsv).join(","));
+}
+
+function safeName(value: string) {
+  return value.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").toLowerCase() || "export";
+}
+
+export function exportPairToCsv(transactions: Transaction[], pair: Pair, currentUserUid: string) {
+  const partner = partnerFor(pair, currentUserUid);
+  download(
+    `transactions_${safeName(partner.name || partner.email)}.csv`,
+    [CSV_HEADER, ...rowsForPair(transactions, pair, currentUserUid)].join("\n"),
+    "text/csv;charset=utf-8"
+  );
 }
 
 export function exportAllToCsv(
@@ -79,17 +103,45 @@ export function exportAllToCsv(
   transactionsByPairId: Record<string, Transaction[]>,
   currentUserUid: string
 ) {
-  const allRows: string[] = [];
+  const rows = pairs.flatMap((pair) => rowsForPair(transactionsByPairId[pair.id] ?? [], pair, currentUserUid));
+  download("transactions_export.csv", [CSV_HEADER, ...rows].join("\n"), "text/csv;charset=utf-8");
+}
 
-  for (const pair of pairs) {
-    const userIdx = pair.users.indexOf(currentUserUid);
-    const partnerName = pair.userNames[userIdx === 0 ? 1 : 0];
-    const txs = (transactionsByPairId[pair.id] ?? []).filter(
-      (t) => t.archived !== true
-    );
-    allRows.push(...buildRows(txs, pair, partnerName));
-  }
+function serialiseTransaction(transaction: Transaction) {
+  return {
+    ...transaction,
+    date: asIso(transaction.date),
+    createdAt: asIso(transaction.createdAt),
+    resolvedAt: asIso(transaction.resolvedAt),
+    archivedAt: asIso(transaction.archivedAt),
+  };
+}
 
-  const csv = [CSV_HEADER, ...allRows].join("\n");
-  downloadCsv("transactions_all.csv", csv);
+function serialisePair(pair: Pair) {
+  return {
+    ...pair,
+    createdAt: asIso(pair.createdAt),
+    updatedAt: asIso(pair.updatedAt),
+    hiddenAt: asIso(pair.hiddenAt),
+  };
+}
+
+export function exportPairToJson(transactions: Transaction[], pair: Pair) {
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    pairs: [serialisePair(pair)],
+    transactions: transactions.map(serialiseTransaction),
+  }, null, 2);
+  download(`transactions_${safeName(pair.id)}.json`, content, "application/json;charset=utf-8");
+}
+
+export function exportAllToJson(pairs: Pair[], transactionsByPairId: Record<string, Transaction[]>) {
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    pairs: pairs.map(serialisePair),
+    transactions: pairs.flatMap((pair) => (transactionsByPairId[pair.id] ?? []).map(serialiseTransaction)),
+  }, null, 2);
+  download("transactions_export.json", content, "application/json;charset=utf-8");
 }

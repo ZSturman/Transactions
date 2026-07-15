@@ -24,8 +24,14 @@ test.describe("Invite flow", () => {
       password: "password123",
     });
 
-    // Mock EmailJS so the invite email doesn't actually send
+    // Mock the server notification request so the invite email doesn't actually send
     const { calls } = captureEmailCalls(page);
+    const permissionErrors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error" && msg.text().includes("permission-denied")) {
+        permissionErrors.push(msg.text());
+      }
+    });
 
     await page.getByRole("button", { name: "+ Transaction" }).first().click();
     await page.getByRole("button", { name: "+ Connect with someone new" }).click();
@@ -34,11 +40,11 @@ test.describe("Invite flow", () => {
     await page.getByRole("button", { name: "Send Invite & Record Transaction" }).click();
 
     // Wait for the success toast (guarantees sendInviteEmail was called)
-    await expect(page.getByText("Invite sent!")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("Invite saved!")).toBeVisible({ timeout: 8_000 });
 
-    // EmailJS should have been called with the invite template
     expect(calls).toHaveLength(1);
-    expect(calls[0].templateId).toBe("template_invite");
+    expect(calls[0].type).toBe("invite");
+    expect(permissionErrors).toHaveLength(0);
   });
 
   test("User B can accept an invite and the pair becomes active for both users", async ({

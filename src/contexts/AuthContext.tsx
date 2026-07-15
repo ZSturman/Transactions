@@ -24,7 +24,7 @@ import {
   where,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
-import { UserProfile } from "@/types";
+import { DEFAULT_NOTIFICATION_PREFERENCES, UserProfile } from "@/types";
 
 interface AuthContextValue {
   user: User | null;
@@ -56,6 +56,8 @@ function profileFromAuthUser(user: User, current?: UserProfile | null): UserProf
     displayName: user.displayName ?? current?.displayName ?? "",
     photoURL: user.photoURL ?? current?.photoURL ?? "",
     currency: current?.currency ?? "USD",
+    notificationPreferences:
+      current?.notificationPreferences ?? DEFAULT_NOTIFICATION_PREFERENCES,
     createdAt: current?.createdAt ?? Timestamp.now(),
   };
 }
@@ -77,6 +79,7 @@ async function ensureUserDoc(user: User, extra?: { currency?: string }): Promise
     displayName: user.displayName ?? "",
     photoURL: user.photoURL ?? "",
     currency: extra?.currency ?? "USD",
+    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
     createdAt: serverTimestamp() as any,
   };
   await setDoc(ref, profile);
@@ -157,6 +160,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signUpEmail(email: string, password: string, displayName: string, currency: string) {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(cred.user, { displayName });
+    // Wait for a current ID token before the first Firestore write. Without
+    // this, a just-created account can occasionally race the Firestore
+    // credential listener and have its first request evaluated as anonymous.
+    await cred.user.getIdToken(true);
     const p = await ensureUserDoc(cred.user, { currency });
     setProfile(p);
   }

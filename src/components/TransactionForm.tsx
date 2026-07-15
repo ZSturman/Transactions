@@ -11,7 +11,6 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Pair } from "@/types";
 import { sendTransactionEmail } from "@/lib/email";
-import { formatAmount } from "@/utils/currency";
 import toast from "react-hot-toast";
 
 interface TransactionFormProps {
@@ -20,7 +19,7 @@ interface TransactionFormProps {
 }
 
 export default function TransactionForm({ pair, onClose }: TransactionFormProps) {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [direction, setDirection] = useState<"i_paid" | "they_paid">("i_paid");
@@ -31,7 +30,6 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
 
   const idx = pair.users.indexOf(user.uid);
   const partnerName = pair.userNames[idx === 0 ? 1 : 0];
-  const partnerEmail = pair.userEmails[idx === 0 ? 1 : 0];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,7 +42,7 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
     setLoading(true);
     try {
       // Create transaction (pending approval from partner)
-      await addDoc(collection(db, "pairs", pair.id, "transactions"), {
+      const transactionRef = await addDoc(collection(db, "pairs", pair.id, "transactions"), {
         pairId: pair.id,
         amount: numAmount,
         type: direction === "i_paid" ? "payment" : "request",
@@ -55,18 +53,8 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
         createdAt: serverTimestamp(),
       });
 
-      // Send email to partner
-      const actionWord = direction === "i_paid" ? "recorded a payment of" : "requested";
-      await sendTransactionEmail({
-        to_email: partnerEmail,
-        to_name: partnerName,
-        from_name: profile?.displayName || user!.email!,
-        subject: `${profile?.displayName} ${actionWord} ${formatAmount(numAmount, pair.currency)}`,
-        message: `${profile?.displayName} ${actionWord} ${formatAmount(numAmount, pair.currency)}${
-          description ? ` for "${description}"` : ""
-        }. Log in to approve or dispute this transaction.`,
-        action_url: `${window.location.origin}/pair/${pair.id}`,
-      });
+      const delivery = await sendTransactionEmail(pair.id, transactionRef.id);
+      if (delivery.skipped) toast("Transaction saved, but its email notification could not be delivered.");
 
       toast.success("Transaction recorded — waiting for approval");
       onClose();

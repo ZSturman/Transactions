@@ -1,10 +1,7 @@
 /**
- * Email template consolidation tests.
- *
- * These tests are the primary verification that the app uses exactly 2 EmailJS
- * templates and — critically — that the removed `template_resolved` template is
- * NEVER called. All three email-triggering actions (new transaction, approve,
- * dispute, invite) should use only `template_transaction` or `template_invite`.
+ * Notification route tests. The client may only request a server-derived
+ * notification for the resource it just changed; Resend delivery itself is
+ * performed by the authenticated route in production.
  */
 
 import { test, expect } from "@playwright/test";
@@ -42,14 +39,14 @@ async function setupPair() {
   return { userA, userB, pairId };
 }
 
-test.describe("Email template consolidation", () => {
+test.describe("Email notification requests", () => {
   test.beforeEach(async () => {
     await clearAllEmulatorData();
   });
 
   // ── New transaction ──────────────────────────────────────────────────────
 
-  test("recording a new transaction sends via template_transaction", async ({
+  test("recording a new transaction requests a transaction notification", async ({
     page,
   }) => {
     const { pairId } = await setupPair();
@@ -66,13 +63,12 @@ test.describe("Email template consolidation", () => {
     ).toBeVisible({ timeout: 8_000 });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].templateId).toBe("template_transaction");
-    expect(calls[0].templateId).not.toBe("template_resolved");
+    expect(calls[0].type).toBe("transaction");
   });
 
   // ── Approve transaction ──────────────────────────────────────────────────
 
-  test("approving a transaction sends via template_transaction, NOT template_resolved", async ({
+  test("approving a transaction requests a resolution notification", async ({
     page,
     browser,
   }) => {
@@ -101,17 +97,15 @@ test.describe("Email template consolidation", () => {
       pageB.getByText("Transaction approved — balance updated!")
     ).toBeVisible({ timeout: 8_000 });
 
-    // The only email sent must use template_transaction — never template_resolved
     expect(calls).toHaveLength(1);
-    expect(calls[0].templateId).toBe("template_transaction");
-    expect(calls[0].templateId).not.toBe("template_resolved");
+    expect(calls[0].type).toBe("resolved");
 
     await ctxB.close();
   });
 
   // ── Dispute transaction ──────────────────────────────────────────────────
 
-  test("disputing a transaction sends via template_transaction, NOT template_resolved", async ({
+  test("disputing a transaction requests a resolution notification", async ({
     page,
     browser,
   }) => {
@@ -142,15 +136,14 @@ test.describe("Email template consolidation", () => {
     ).toBeVisible({ timeout: 8_000 });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].templateId).toBe("template_transaction");
-    expect(calls[0].templateId).not.toBe("template_resolved");
+    expect(calls[0].type).toBe("resolved");
 
     await ctxB.close();
   });
 
   // ── Invite ───────────────────────────────────────────────────────────────
 
-  test("sending an invite uses template_invite, not template_transaction", async ({
+  test("sending an invite requests an invitation notification", async ({
     page,
   }) => {
     await registerViaUI(page, {
@@ -172,14 +165,12 @@ test.describe("Email template consolidation", () => {
     await expect(page.getByText("Invite sent!")).toBeVisible({ timeout: 8_000 });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].templateId).toBe("template_invite");
-    expect(calls[0].templateId).not.toBe("template_transaction");
-    expect(calls[0].templateId).not.toBe("template_resolved");
+    expect(calls[0].type).toBe("invite");
   });
 
-  // ── Exhaustive "template_resolved is never used" check ───────────────────
+  // ── Exhaustive notification-type check ───────────────────────────────────
 
-  test("template_resolved is never called across all email-triggering actions", async ({
+  test("only supported notification types are requested", async ({
     page,
     browser,
   }) => {
@@ -195,7 +186,7 @@ test.describe("Email template consolidation", () => {
       status: "pending",
     });
 
-    // Collect EmailJS calls for both users
+    // Collect notification requests for both users
     const allCalls: string[] = [];
 
     // User A creates another transaction (email to Bob)
@@ -206,7 +197,7 @@ test.describe("Email template consolidation", () => {
     await page.getByPlaceholder("0.00").fill("15");
     await page.getByRole("button", { name: "Record Transaction" }).click();
     await page.getByText("Transaction recorded").waitFor({ timeout: 8_000 });
-    allCalls.push(...callsA.map((c) => c.templateId));
+    allCalls.push(...callsA.map((c) => c.type));
 
     // User B approves the pre-created transaction (email to Alice)
     const ctxB = await browser.newContext();
@@ -216,15 +207,11 @@ test.describe("Email template consolidation", () => {
     await pageB.goto(`/pair/${pairId}`);
     await pageB.getByRole("button", { name: "Approve", exact: true }).first().click();
     await pageB.getByText("Transaction approved").waitFor({ timeout: 8_000 });
-    allCalls.push(...callsB.map((c) => c.templateId));
+    allCalls.push(...callsB.map((c) => c.type));
     await ctxB.close();
 
-    // Assert template_resolved was never invoked
-    expect(allCalls).not.toContain("template_resolved");
-
-    // And only the two permitted templates are used
-    for (const id of allCalls) {
-      expect(["template_transaction", "template_invite"]).toContain(id);
+    for (const type of allCalls) {
+      expect(["transaction", "resolved", "invite"]).toContain(type);
     }
   });
 });

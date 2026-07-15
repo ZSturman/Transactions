@@ -23,7 +23,7 @@ export default function PendingTransactionBanner({
   pendingTxs,
   pairs,
 }: PendingTransactionBannerProps) {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [disputingId, setDisputingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
@@ -34,14 +34,12 @@ export default function PendingTransactionBanner({
   if (!user || userPendingTxs.length === 0) return null;
 
   const pairById = Object.fromEntries(pairs.map((p) => [p.id, p]));
-  const displayName = profile?.displayName || user.email || "You";
-
   async function handleApprove(tx: PairTransaction) {
     const pair = pairById[tx.pairId];
     if (!pair) return;
     setLoadingId(tx.id);
     try {
-      await approveTransaction(pair, tx, user!.uid, displayName, window.location.origin);
+      await approveTransaction(pair, tx, user!.uid);
       toast.success("Transaction approved — balance updated!");
     } catch (err: any) {
       toast.error(err.message || "Failed to approve");
@@ -63,10 +61,8 @@ export default function PendingTransactionBanner({
         pair,
         tx,
         user!.uid,
-        displayName,
         reason,
-        proposedAmount,
-        window.location.origin
+        proposedAmount
       );
       setDisputingId(null);
       toast.success("Transaction disputed — creator notified");

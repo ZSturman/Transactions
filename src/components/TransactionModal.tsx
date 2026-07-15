@@ -6,8 +6,8 @@ import {
   addDoc,
   serverTimestamp,
   doc,
-  setDoc,
   Timestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -70,7 +70,10 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
     setSendingInvite(true);
     try {
       const pairRef = doc(collection(db, "pairs"));
-      await setDoc(pairRef, {
+      const inviteRef = doc(collection(db, "invites"));
+      const expiresAt = Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      const batch = writeBatch(db);
+      batch.set(pairRef, {
         users: [user!.uid, ""],
         userEmails: [user!.email!.toLowerCase(), normalizedEmail],
         userNames: [profile!.displayName || user!.email!, ""],
@@ -80,8 +83,7 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-
-      await addDoc(collection(db, "invites"), {
+      batch.set(inviteRef, {
         fromUid: user!.uid,
         fromEmail: user!.email!.toLowerCase(),
         fromName: profile!.displayName || user!.email!,
@@ -95,23 +97,13 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
           date: txDate,
         },
         createdAt: serverTimestamp(),
+        expiresAt,
       });
+      await batch.commit();
 
-      const partnerNickname = normalizedEmail.split("@")[0];
-      const actionWord = direction === "i_paid"
-        ? `paid ${partnerNickname} ${formatAmount(numAmount, newCurrency)}`
-        : `${partnerNickname} paid them ${formatAmount(numAmount, newCurrency)}`;
-
-      await sendInviteEmail({
-        to_email: normalizedEmail,
-        to_name: partnerNickname,
-        from_name: profile!.displayName || user!.email!,
-        subject: `${profile!.displayName || user!.email!} invited you to Transactions`,
-        message: `${profile!.displayName || user!.email!} ${actionWord}${description ? ` for "${description}"` : ""} and wants to track it together on Transactions. Accept the invite to record this transaction.`,
-        action_url: window.location.origin,
-      });
-
-      toast.success("Invite sent! Transaction will be recorded when they accept.");
+      const delivery = await sendInviteEmail(inviteRef.id);
+      toast.success("Invite saved! Transaction will be recorded when they accept.");
+      if (delivery.skipped) toast("The email could not be delivered. You can copy the invitation link from Pending Connections.");
       onClose();
     } catch (err: any) {
       toast.error(err.message || "Failed to send invite");
@@ -130,15 +122,11 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
       return;
     }
 
-    const idx = selectedPair.users.indexOf(user!.uid);
-    const partnerName = selectedPair.userNames[idx === 0 ? 1 : 0];
-    const partnerEmail = selectedPair.userEmails[idx === 0 ? 1 : 0];
-
     setLoading(true);
     try {
       const eventDate = Timestamp.fromDate(new Date(txDate + "T12:00:00"));
 
-      await addDoc(collection(db, "pairs", selectedPair.id, "transactions"), {
+      const transactionRef = await addDoc(collection(db, "pairs", selectedPair.id, "transactions"), {
         pairId: selectedPair.id,
         amount: numAmount,
         type: direction === "i_paid" ? "payment" : "request",
@@ -151,18 +139,8 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
 
       // Only send email notification for active pairs (pending pairs — partner hasn't signed up yet)
       if (selectedPair.status === "active") {
-        const actionWord =
-          direction === "i_paid" ? "recorded a payment of" : "requested";
-        await sendTransactionEmail({
-          to_email: partnerEmail,
-          to_name: partnerName,
-          from_name: profile!.displayName || user!.email!,
-          subject: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}`,
-          message: `${profile!.displayName} ${actionWord} ${formatAmount(numAmount, selectedPair.currency)}${
-            description ? ` for "${description}"` : ""
-          }. Log in to approve or dispute this transaction.`,
-          action_url: `${window.location.origin}/pair/${selectedPair.id}`,
-        });
+        const delivery = await sendTransactionEmail(selectedPair.id, transactionRef.id);
+        if (delivery.skipped) toast("Transaction saved, but its email notification could not be delivered.");
       }
 
       toast.success(

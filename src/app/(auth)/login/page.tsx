@@ -1,24 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";;
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import toast from "react-hot-toast";
 
 export default function LoginPage() {
+  return <Suspense fallback={null}><LoginForm /></Suspense>;
+}
+
+function LoginForm() {
   const { signInEmail, signInGoogle } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  const invitationEmail = searchParams.get("email")?.trim().toLowerCase() ?? "";
+  const [email, setEmail] = useState(invitationEmail);
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const continueTo = searchParams.get("continue");
+  const destination = continueTo?.startsWith("/invite/") ? continueTo : "/";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
       await signInEmail(email, password);
-      router.push("/");
+      router.push(destination);
     } catch (err: any) {
       toast.error(err.message || "Failed to sign in");
     } finally {
@@ -30,7 +38,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInGoogle();
-      router.push("/");
+      router.push(destination);
     } catch (err: any) {
       toast.error(err.message || "Google sign-in failed");
     } finally {
@@ -101,7 +109,7 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-gray-500 mt-4">
           Don&apos;t have an account?{" "}
-          <Link href="/register" className="text-blue-600 hover:underline font-medium">
+          <Link href={continueTo ? `/register?continue=${encodeURIComponent(continueTo)}${invitationEmail ? `&email=${encodeURIComponent(invitationEmail)}` : ""}` : "/register"} className="text-blue-600 hover:underline font-medium">
             Sign up
           </Link>
         </p>

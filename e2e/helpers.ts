@@ -157,6 +157,7 @@ export async function createInvite(opts: {
     description: string;
     date: string;
   };
+  expiresAt?: Date;
 }): Promise<void> {
   const fields: Record<string, FsValue> = {
     fromUid: str(opts.fromUid),
@@ -176,6 +177,7 @@ export async function createInvite(opts: {
       date: str(pt.date),
     });
   }
+  if (opts.expiresAt) fields.expiresAt = ts(opts.expiresAt);
   await patchDoc(`invites/${opts.id}`, fields);
 }
 
@@ -201,38 +203,27 @@ export async function createTransaction(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// EmailJS mock
+// Notification route mock
 // ---------------------------------------------------------------------------
 
-export interface EmailJSCall {
-  templateId: string;
-  serviceId: string;
+export interface NotificationCall {
+  type: string;
   params: Record<string, unknown>;
 }
 
 /**
- * Intercepts all requests to /api/send-email on the given page and records
- * the resolved EmailJS template ID for each send call. Returns the mutable
- * `calls` array so tests can assert on it after actions.
- *
- * Email sending is now server-side (@emailjs/nodejs), so we intercept at the
- * Next.js API route boundary rather than at api.emailjs.com. The `type` field
- * in the request body maps to:
- *   invite      → template_invite
- *   transaction → template_transaction
- *   resolved    → template_transaction  (both share Template 2)
+ * Intercepts notification requests at the server route boundary. The browser
+ * should only send a resource ID and notification type; addresses and copy are
+ * derived by the authenticated server route in production.
  */
-export function captureEmailCalls(page: Page): { calls: EmailJSCall[] } {
-  const calls: EmailJSCall[] = [];
+export function captureEmailCalls(page: Page): { calls: NotificationCall[] } {
+  const calls: NotificationCall[] = [];
   page.route("**/api/send-email", async (route: Route) => {
     try {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       const type = String(body.type ?? "");
-      const templateId =
-        type === "invite" ? "template_invite" : "template_transaction";
       calls.push({
-        templateId,
-        serviceId: "test_service",
+        type,
         params: body as Record<string, unknown>,
       });
     } catch {
@@ -241,7 +232,7 @@ export function captureEmailCalls(page: Page): { calls: EmailJSCall[] } {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, via: "emailjs" }),
+      body: JSON.stringify({ delivered: true }),
     });
   });
   return { calls };

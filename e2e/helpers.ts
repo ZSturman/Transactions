@@ -77,6 +77,56 @@ function ts(v?: Date): FsValue { return { timestampValue: (v ?? new Date()).toIS
 function arr(...items: FsValue[]): FsValue { return { arrayValue: { values: items } }; }
 function mapVal(fields: Record<string, FsValue>): FsValue { return { mapValue: { fields } }; }
 
+function fromFsValue(value: FsValue): unknown {
+  if ("stringValue" in value) return value.stringValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("timestampValue" in value) return value.timestampValue;
+  if ("nullValue" in value) return null;
+  if ("arrayValue" in value) return (value.arrayValue.values ?? []).map(fromFsValue);
+  if ("mapValue" in value) {
+    return Object.fromEntries(
+      Object.entries(value.mapValue.fields).map(([key, nested]) => [key, fromFsValue(nested)])
+    );
+  }
+  return undefined;
+}
+
+/** Read a Firestore document through the emulator admin endpoint for assertions. */
+export async function getFirestoreDocument(
+  path: string
+): Promise<Record<string, unknown> | null> {
+  const response = await fetch(`${FS_BASE}/${path}`, {
+    headers: { Authorization: "Bearer owner" },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`getFirestoreDocument(${path}) failed: ${response.status}`);
+  const body = (await response.json()) as { fields?: Record<string, FsValue> };
+  return Object.fromEntries(
+    Object.entries(body.fields ?? {}).map(([key, value]) => [key, fromFsValue(value)])
+  );
+}
+
+/** List a Firestore subcollection through the emulator admin endpoint for assertions. */
+export async function listFirestoreDocuments(
+  path: string
+): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
+  const response = await fetch(`${FS_BASE}/${path}`, {
+    headers: { Authorization: "Bearer owner" },
+  });
+  if (!response.ok) throw new Error(`listFirestoreDocuments(${path}) failed: ${response.status}`);
+  const body = (await response.json()) as {
+    documents?: Array<{ name: string; fields?: Record<string, FsValue> }>;
+  };
+  return (body.documents ?? []).map((document) => ({
+    id: document.name.split("/").at(-1) ?? "",
+    data: Object.fromEntries(
+      Object.entries(document.fields ?? {}).map(([key, value]) => [key, fromFsValue(value)])
+    ),
+  }));
+}
+
 async function patchDoc(
   path: string,
   fields: Record<string, FsValue>
@@ -262,6 +312,28 @@ export function captureEmailCalls(page: Page): { calls: NotificationCall[] } {
     });
   });
   return { calls };
+}
+
+/** Capture browser-visible Firebase failures that should never reach the user. */
+export function trackFirebaseFailures(page: Page): {
+  permissionErrors: string[];
+  authLookupFailures: string[];
+} {
+  const permissionErrors: string[] = [];
+  const authLookupFailures: string[] = [];
+
+  page.on("console", (message) => {
+    if (message.type() === "error" && message.text().includes("permission-denied")) {
+      permissionErrors.push(message.text());
+    }
+  });
+  page.on("response", (response) => {
+    if (response.status() === 400 && response.url().includes("accounts:lookup")) {
+      authLookupFailures.push(response.url());
+    }
+  });
+
+  return { permissionErrors, authLookupFailures };
 }
 
 // ---------------------------------------------------------------------------

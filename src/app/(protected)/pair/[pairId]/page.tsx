@@ -132,6 +132,7 @@ export default function PairDetailPage() {
 
         const txRef = doc(collection(db, "pairs", pair!.id, "transactions"));
         transaction.set(txRef, {
+          pairId: pair!.id,
           amount: absBalance,
           type: "settlement",
           description: "Settled balance",
@@ -166,6 +167,7 @@ export default function PairDetailPage() {
         const txRef = doc(collection(db, "pairs", pair!.id, "transactions"));
 
         transaction.set(txRef, {
+          pairId: pair!.id,
           amount,
           type: "forgiveness",
           description: reason || "Debt forgiven",

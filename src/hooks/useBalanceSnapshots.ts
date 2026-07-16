@@ -19,11 +19,21 @@ export function useBalanceSnapshots(pairId: string | undefined) {
       orderBy("timestamp", "asc")
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as BalanceSnapshot));
-      setSnapshots(items);
-      setLoading(false);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as BalanceSnapshot));
+        setSnapshots(items);
+        setLoading(false);
+      },
+      (error) => {
+        if (error.code !== "permission-denied") {
+          console.error(`Balance snapshots listener error for pair ${pairId}:`, error);
+        }
+        setSnapshots([]);
+        setLoading(false);
+      }
+    );
 
     return unsub;
   }, [pairId]);

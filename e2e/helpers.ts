@@ -17,6 +17,7 @@ const FS_BASE = `http://localhost:8080/v1/projects/${PROJECT_ID}/databases/(defa
 const FS_EMULATOR = `http://localhost:8080/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const AUTH_EMULATOR = `http://localhost:9099/emulator/v1/projects/${PROJECT_ID}/accounts`;
 const AUTH_SIGNUP = `http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-key`;
+const RESEND_SINK = "http://127.0.0.1:3021";
 
 // ---------------------------------------------------------------------------
 // Emulator teardown
@@ -27,7 +28,32 @@ export async function clearAllEmulatorData(): Promise<void> {
   await Promise.all([
     fetch(FS_EMULATOR, { method: "DELETE" }),
     fetch(AUTH_EMULATOR, { method: "DELETE" }),
+    clearCapturedEmails(),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Local Resend sink
+// ---------------------------------------------------------------------------
+
+export interface CapturedEmail {
+  id: string;
+  from: string;
+  to: string[];
+  subject: string;
+  html: string;
+}
+
+export async function clearCapturedEmails(): Promise<void> {
+  const response = await fetch(`${RESEND_SINK}/emails`, { method: "DELETE" });
+  if (!response.ok) throw new Error(`clearCapturedEmails failed: ${response.status}`);
+}
+
+export async function getCapturedEmails(): Promise<CapturedEmail[]> {
+  const response = await fetch(`${RESEND_SINK}/emails`);
+  if (!response.ok) throw new Error(`getCapturedEmails failed: ${response.status}`);
+  const body = (await response.json()) as { emails?: CapturedEmail[] };
+  return body.emails ?? [];
 }
 
 // ---------------------------------------------------------------------------

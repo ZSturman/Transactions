@@ -235,4 +235,37 @@ test.describe("Invite flow", () => {
     await expect(page.locator("[role='status']")).toBeVisible({ timeout: 8_000 });
     await expect(page.getByText("You can't invite yourself")).toBeVisible();
   });
+
+  test("the sender can cancel a sent invite and its queued transaction", async ({ page }) => {
+    await registerViaUI(page, {
+      name: "Alice",
+      email: "alice@cancel-invite-test.com",
+      password: "password123",
+    });
+
+    const permissionErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error" && message.text().includes("permission-denied")) {
+        permissionErrors.push(message.text());
+      }
+    });
+
+    await page.getByRole("button", { name: "+ Transaction" }).first().click();
+    await page.getByRole("button", { name: "+ Connect with someone new" }).click();
+    await page.getByPlaceholder("Their email address").fill("bob@cancel-invite-test.com");
+    await page.getByPlaceholder("0.00").fill("25");
+    await page.getByRole("button", { name: "Send Invite & Record Transaction" }).click();
+    await expect(page.getByText("Invite saved!")).toBeVisible({ timeout: 8_000 });
+
+    await expect(page.getByText("Pending Connections")).toBeVisible({ timeout: 8_000 });
+    await page.getByRole("button", { name: "+ Request" }).click();
+    await page.getByPlaceholder("0.00").fill("10");
+    await page.getByRole("button", { name: "Record Transaction" }).click();
+    await expect(page.getByText("Request queued")).toBeVisible({ timeout: 8_000 });
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText("Invite cancelled")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("Pending Connections")).not.toBeVisible({ timeout: 8_000 });
+    expect(permissionErrors).toHaveLength(0);
+  });
 });

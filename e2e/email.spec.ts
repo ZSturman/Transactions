@@ -162,7 +162,7 @@ test.describe("Email notification requests", () => {
     await page.getByPlaceholder("0.00").fill("25");
     await page.getByRole("button", { name: "Send Invite & Record Transaction" }).click();
 
-    await expect(page.getByText("Invite sent!")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("Invite saved!")).toBeVisible({ timeout: 8_000 });
 
     expect(calls).toHaveLength(1);
     expect(calls[0].type).toBe("invite");

@@ -29,6 +29,24 @@ export function usePairs() {
     );
 
     const unsub = onSnapshot(q, (snap) => {
+      // A pending local pair creation is visible to this listener before
+      // Firestore has committed the parent document. Starting its nested
+      // transaction listener in that window makes the rules correctly reject
+      // the query because the parent does not exist yet. Conversely, remove a
+      // locally deleted pair straight away so nested listeners unsubscribe
+      // before its parent document is removed on the server.
+      if (snap.metadata.hasPendingWrites) {
+        const removedPairIds = snap.docChanges()
+          .filter((change) => change.type === "removed")
+          .map((change) => change.doc.id);
+
+        if (removedPairIds.length > 0) {
+          setPairs((current) => current.filter((pair) => !removedPairIds.includes(pair.id)));
+        }
+        setLoading(false);
+        return;
+      }
+
       const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Pair));
       setPairs(items);
       setLoading(false);

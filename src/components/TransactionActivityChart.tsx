@@ -82,7 +82,10 @@ export default function TransactionActivityChart({
     >();
 
     for (const tx of approved) {
-      const ts = tx.createdAt?.toMillis?.() ?? 0;
+      // Group activity by when it happened, not when it was entered or approved.
+      // Older transactions did not store an event date, so retain their
+      // creation timestamp as a backwards-compatible fallback.
+      const ts = tx.date?.toMillis?.() ?? tx.createdAt?.toMillis?.() ?? 0;
       if (ts < cutoff) continue;
       const date = new Date(ts);
       const key = bucketKey(date, period);

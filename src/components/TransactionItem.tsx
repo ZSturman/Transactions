@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Transaction, Pair } from "@/types";
 import { formatAmount } from "@/utils/currency";
+import { obligationText, partnerNameFor } from "@/utils/transactionPresentation";
 import DisputeWithCounterForm from "@/components/DisputeWithCounterForm";
 
 interface TransactionItemProps {
@@ -39,7 +40,9 @@ export default function TransactionItem({
   const isCreator = tx.createdBy === user.uid;
   const idx = pair.users.indexOf(user.uid);
   const creatorName = isCreator ? "You" : pair.userNames[idx === 0 ? 1 : 0];
+  const partnerName = partnerNameFor(pair, user.uid);
   const isDeleted = pair.deletedUsers && pair.deletedUsers[tx.createdBy];
+  const directObligation = obligationText(tx, pair, user.uid);
 
   const isPending = tx.status === "pending" && !isCreator;
   const isDisputedWithCounter =
@@ -74,13 +77,25 @@ export default function TransactionItem({
     label = isCreator
       ? "You forgave"
       : `${isDeleted ? "[Deleted Account]" : creatorName} forgave`;
-  } else if (tx.type === "payment") {
-    label = isCreator ? "You paid" : `${isDeleted ? "[Deleted Account]" : creatorName} paid`;
   } else {
-    label = isCreator
-      ? "You requested"
-      : `${isDeleted ? "[Deleted Account]" : creatorName} requested`;
+    label = tx.split
+      ? `Split expense · ${directObligation ?? "shared expense"}`
+      : directObligation ?? "Adjustment";
   }
+
+  const splitSummary = tx.split
+    ? (() => {
+        const userShare = isCreator
+          ? tx.split!.creatorSharePercent
+          : 100 - tx.split!.creatorSharePercent;
+        const partnerShare = 100 - userShare;
+        const payerIsCreator = tx.split!.paidBy === "creator";
+        const payerName = payerIsCreator
+          ? isCreator ? "You" : isDeleted ? "[Deleted Account]" : creatorName
+          : isCreator ? partnerName : "You";
+        return `We spent ${formatAmount(tx.split!.totalAmount, pair.currency)} · you ${userShare}% / ${partnerName} ${partnerShare}%. ${payerName} paid the bill.`;
+      })()
+    : null;
 
   const statusLabel = tx.type === "settlement"
     ? tx.status === "approved"
@@ -117,6 +132,9 @@ export default function TransactionItem({
           {tx.description && (
             <p className="text-xs text-gray-500 mt-0.5">{tx.description}</p>
           )}
+          {splitSummary && (
+            <p className="text-xs text-blue-700 mt-1">{splitSummary}</p>
+          )}
           {tx.status === "disputed" && tx.disputeReason && (
             <p className="text-xs text-red-500 mt-1 italic">
               Dispute: &ldquo;{tx.disputeReason}&rdquo;
@@ -128,7 +146,9 @@ export default function TransactionItem({
             className={`font-bold ${
               tx.type === "settlement" || tx.type === "forgiveness"
                 ? "text-gray-500"
-                : tx.type === "payment"
+                : directObligation?.startsWith("You owe")
+                ? "text-red-600"
+                : directObligation
                 ? "text-green-600"
                 : "text-blue-600"
             }`}

@@ -35,7 +35,7 @@ test.describe("CSV import and exports", () => {
     await clearAllEmulatorData();
   });
 
-  test("maps a type-only CSV, flags invalid data, and skips a duplicate row", async ({ page }) => {
+  test("maps legacy balance wording, flags invalid data, and skips a duplicate row", async ({ page }) => {
     const { pairId } = await setupPair();
     await loginViaUI(page, { email: "alice@transfer-test.com", password: "password123" });
     await page.goto(`/pair/${pairId}`);
@@ -45,20 +45,22 @@ test.describe("CSV import and exports", () => {
       name: "history.csv",
       mimeType: "text/csv",
       buffer: Buffer.from(
-        "Total,Memo,Transaction date,Type\n12.50,Dinner,2026-06-01,payment\n12.50,Dinner,2026-06-01,payment\nnot-a-number,Broken,2026-06-01,payment\n"
+        "Total,Memo,Transaction date,Type\n12.50,Dinner,2026-06-01,I paid\n8.50,Cab,2026-06-02,I requested\n12.50,Dinner,2026-06-01,I paid\nnot-a-number,Broken,2026-06-01,I paid\n"
       ),
     });
 
     await page.getByRole("button", { name: "Preview →" }).click();
-    await expect(page.getByText("1 ready")).toBeVisible();
+    await expect(page.getByText("2 ready")).toBeVisible();
     await expect(page.getByText("1 duplicate skipped")).toBeVisible();
     await expect(page.getByText("1 need attention")).toBeVisible();
+    await expect(page.getByText("Partner owes you").first()).toBeVisible();
+    await expect(page.getByText("You owe partner")).toBeVisible();
     await page.getByLabel(/Skip the 1 invalid row/).check();
     await page.getByRole("button", { name: "Continue →" }).click();
-    await page.getByRole("button", { name: "Import 1 transaction" }).click();
+    await page.getByRole("button", { name: "Import 2 transactions" }).click();
 
     await expect(page.getByText("Import complete")).toBeVisible({ timeout: 8_000 });
-    await expect(page.getByText("1", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("2", { exact: true }).first()).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
     await expect(page.getByText("Dinner")).toBeVisible();
   });

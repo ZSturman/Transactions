@@ -116,7 +116,7 @@ export function useInvites() {
 
       if (currentInvite.pendingTransaction) {
         const txRef = doc(collection(db, "pairs", invite.pairId, "transactions"));
-        const { amount, type, description, date } = currentInvite.pendingTransaction;
+        const { amount, type, description, date, split } = currentInvite.pendingTransaction;
         transaction.set(txRef, {
           pairId: invite.pairId,
           amount,
@@ -126,6 +126,7 @@ export function useInvites() {
           status: "pending",
           date: Timestamp.fromDate(new Date(`${date}T12:00:00`)),
           createdAt: serverTimestamp(),
+          ...(split && { split }),
         });
       }
     });

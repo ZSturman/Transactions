@@ -14,6 +14,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Pair, CURRENCIES } from "@/types";
 import { formatAmount } from "@/utils/currency";
 import { sendTransactionEmail, sendInviteEmail } from "@/lib/email";
+import TransactionEntryFields from "@/components/TransactionEntryFields";
+import {
+  splitDebtAmount,
+  splitDetailsFor,
+  TransactionDirection,
+  TransactionEntryMode,
+} from "@/utils/transactionPresentation";
 import toast from "react-hot-toast";
 
 interface TransactionModalProps {
@@ -38,7 +45,9 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
   // Transaction form state
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [direction, setDirection] = useState<"i_paid" | "they_paid">("i_paid");
+  const [mode, setMode] = useState<TransactionEntryMode>("payment");
+  const [direction, setDirection] = useState<TransactionDirection>("i_paid");
+  const [creatorSharePercent, setCreatorSharePercent] = useState("50");
   const [txDate, setTxDate] = useState(new Date().toISOString().split("T")[0]);
   const [loading, setLoading] = useState(false);
 
@@ -61,9 +70,22 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
       return;
     }
 
-    const numAmount = parseFloat(amount);
-    if (!numAmount || numAmount <= 0) {
+    const enteredAmount = parseFloat(amount);
+    const sharePercent = parseFloat(creatorSharePercent);
+    if (!enteredAmount || enteredAmount <= 0) {
       toast.error("Enter a valid amount");
+      return;
+    }
+    if (mode === "split" && (!Number.isFinite(sharePercent) || sharePercent < 0 || sharePercent > 100)) {
+      toast.error("Enter a split between 0% and 100%");
+      return;
+    }
+
+    const numAmount = mode === "split"
+      ? splitDebtAmount(enteredAmount, sharePercent, direction)
+      : enteredAmount;
+    if (numAmount <= 0) {
+      toast.error("This split leaves no amount for the other person");
       return;
     }
 
@@ -95,8 +117,11 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
         pendingTransaction: {
           amount: numAmount,
           type: txType,
-          description: description || (direction === "i_paid" ? "Payment" : "Request"),
+          description: description || (mode === "split" ? "Split expense" : "Payment"),
           date: txDate,
+          ...(mode === "split" && {
+            split: splitDetailsFor(enteredAmount, sharePercent, direction),
+          }),
         },
         createdAt: serverTimestamp(),
         expiresAt,
@@ -118,9 +143,22 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
     e.preventDefault();
     if (!selectedPair) return;
 
-    const numAmount = parseFloat(amount);
-    if (!numAmount || numAmount <= 0) {
+    const enteredAmount = parseFloat(amount);
+    const sharePercent = parseFloat(creatorSharePercent);
+    if (!enteredAmount || enteredAmount <= 0) {
       toast.error("Enter a valid amount");
+      return;
+    }
+    if (mode === "split" && (!Number.isFinite(sharePercent) || sharePercent < 0 || sharePercent > 100)) {
+      toast.error("Enter a split between 0% and 100%");
+      return;
+    }
+
+    const numAmount = mode === "split"
+      ? splitDebtAmount(enteredAmount, sharePercent, direction)
+      : enteredAmount;
+    if (numAmount <= 0) {
+      toast.error("This split leaves no amount for the other person");
       return;
     }
 
@@ -132,11 +170,14 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
         pairId: selectedPair.id,
         amount: numAmount,
         type: direction === "i_paid" ? "payment" : "request",
-        description: description || (direction === "i_paid" ? "Payment" : "Request"),
+        description: description || (mode === "split" ? "Split expense" : "Payment"),
         createdBy: user!.uid,
         status: "pending",
         date: eventDate,
         createdAt: serverTimestamp(),
+        ...(mode === "split" && {
+          split: splitDetailsFor(enteredAmount, sharePercent, direction),
+        }),
       });
 
       // Only send email notification for active pairs (pending pairs — partner hasn't signed up yet)
@@ -286,53 +327,18 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
                       ))}
                     </select>
                   </div>
-                  {/* Transaction fields */}
-                  <div className="grid grid-cols-2 gap-2">
-                    {(() => {
-                      const nick = newEmail.split("@")[0] || "them";
-                      return (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setDirection("i_paid")}
-                            className={`py-2.5 px-3 rounded-xl text-sm font-medium border transition-colors ${
-                              direction === "i_paid"
-                                ? "bg-green-50 border-green-300 text-green-700"
-                                : "border-gray-200 text-gray-500 hover:bg-gray-50"
-                            }`}
-                          >
-                            ↑ I paid {nick}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDirection("they_paid")}
-                            className={`py-2.5 px-3 rounded-xl text-sm font-medium border transition-colors ${
-                              direction === "they_paid"
-                                ? "bg-blue-50 border-blue-300 text-blue-700"
-                                : "border-gray-200 text-gray-500 hover:bg-gray-50"
-                            }`}
-                          >
-                            ↓ {nick} paid me
-                          </button>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                      Amount ({newCurrency})
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      className="input-field text-2xl font-bold"
-                      placeholder="0.00"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      required
-                    />
-                  </div>
+                  <TransactionEntryFields
+                    partnerName={newEmail.split("@")[0] || "your partner"}
+                    currency={newCurrency}
+                    mode={mode}
+                    onModeChange={setMode}
+                    direction={direction}
+                    onDirectionChange={setDirection}
+                    amount={amount}
+                    onAmountChange={setAmount}
+                    creatorSharePercent={creatorSharePercent}
+                    onCreatorSharePercentChange={setCreatorSharePercent}
+                  />
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">
                       What&apos;s it for? (optional)
@@ -372,49 +378,19 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
         {/* Step 2: Fill transaction */}
         {step === "fill-transaction" && selectedPair && (
           <form onSubmit={handleSubmitTransaction} className="space-y-4">
-            {/* Direction toggle */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setDirection("i_paid")}
-                className={`py-2.5 px-3 rounded-xl text-sm font-medium border transition-colors ${
-                  direction === "i_paid"
-                    ? "bg-green-50 border-green-300 text-green-700"
-                    : "border-gray-200 text-gray-500 hover:bg-gray-50"
-                }`}
-              >
-                ↑ I paid {partnerName.split(" ")[0]}
-              </button>
-              <button
-                type="button"
-                onClick={() => setDirection("they_paid")}
-                className={`py-2.5 px-3 rounded-xl text-sm font-medium border transition-colors ${
-                  direction === "they_paid"
-                    ? "bg-blue-50 border-blue-300 text-blue-700"
-                    : "border-gray-200 text-gray-500 hover:bg-gray-50"
-                }`}
-              >
-                ↓ {partnerName.split(" ")[0]} paid me
-              </button>
-            </div>
-
-            {/* Amount */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Amount ({selectedPair.currency})
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                className="input-field text-2xl font-bold"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                required
-                autoFocus
-              />
-            </div>
+            <TransactionEntryFields
+              partnerName={partnerName}
+              currency={selectedPair.currency}
+              mode={mode}
+              onModeChange={setMode}
+              direction={direction}
+              onDirectionChange={setDirection}
+              amount={amount}
+              onAmountChange={setAmount}
+              creatorSharePercent={creatorSharePercent}
+              onCreatorSharePercentChange={setCreatorSharePercent}
+              autoFocus
+            />
 
             {/* Description */}
             <div>

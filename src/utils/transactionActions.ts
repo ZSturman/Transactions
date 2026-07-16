@@ -154,6 +154,34 @@ export async function denySettlement(
   await sendResolvedEmail(pair.id, tx.id);
 }
 
+/** Decline a pending transaction without asking the user to write a dispute note. */
+export async function declineTransaction(
+  pair: Pair,
+  tx: Transaction,
+  userId: string
+): Promise<void> {
+  if (tx.type === "settlement") {
+    return denySettlement(pair, tx, userId);
+  }
+
+  await runTransaction(db, async (firestoreTransaction) => {
+    const txRef = doc(db, "pairs", pair.id, "transactions", tx.id);
+    const txSnap = await firestoreTransaction.get(txRef);
+    if (!txSnap.exists()) throw new Error("Transaction not found");
+    const currentTx = txSnap.data() as Transaction;
+    if (currentTx.status !== "pending") throw new Error("This transaction has already been resolved");
+    if (currentTx.createdBy === userId) throw new Error("Only your partner can decline this transaction");
+
+    firestoreTransaction.update(txRef, {
+      status: "disputed",
+      disputeReason: "Declined",
+      resolvedAt: serverTimestamp(),
+    });
+  });
+
+  await sendResolvedEmail(pair.id, tx.id);
+}
+
 export async function disputeTransaction(
   pair: Pair,
   tx: Transaction,

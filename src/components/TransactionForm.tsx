@@ -11,6 +11,13 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Pair } from "@/types";
 import { sendTransactionEmail } from "@/lib/email";
+import TransactionEntryFields from "@/components/TransactionEntryFields";
+import {
+  splitDebtAmount,
+  splitDetailsFor,
+  TransactionDirection,
+  TransactionEntryMode,
+} from "@/utils/transactionPresentation";
 import toast from "react-hot-toast";
 
 interface TransactionFormProps {
@@ -22,7 +29,9 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
   const { user } = useAuth();
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [direction, setDirection] = useState<"i_paid" | "they_paid">("i_paid");
+  const [mode, setMode] = useState<TransactionEntryMode>("payment");
+  const [direction, setDirection] = useState<TransactionDirection>("i_paid");
+  const [creatorSharePercent, setCreatorSharePercent] = useState("50");
   const [txDate, setTxDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [loading, setLoading] = useState(false);
 
@@ -33,9 +42,22 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const numAmount = parseFloat(amount);
-    if (!numAmount || numAmount <= 0) {
+    const enteredAmount = parseFloat(amount);
+    const sharePercent = parseFloat(creatorSharePercent);
+    if (!enteredAmount || enteredAmount <= 0) {
       toast.error("Enter a valid amount");
+      return;
+    }
+    if (mode === "split" && (!Number.isFinite(sharePercent) || sharePercent < 0 || sharePercent > 100)) {
+      toast.error("Enter a split between 0% and 100%");
+      return;
+    }
+
+    const numAmount = mode === "split"
+      ? splitDebtAmount(enteredAmount, sharePercent, direction)
+      : enteredAmount;
+    if (numAmount <= 0) {
+      toast.error("This split leaves no amount for the other person");
       return;
     }
 
@@ -46,11 +68,14 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
         pairId: pair.id,
         amount: numAmount,
         type: direction === "i_paid" ? "payment" : "request",
-        description: description || (direction === "i_paid" ? "Payment" : "Request"),
+        description: description || (mode === "split" ? "Split expense" : "Payment"),
         createdBy: user!.uid,
         status: "pending",
         date: Timestamp.fromDate(new Date(txDate + "T12:00:00")),
         createdAt: serverTimestamp(),
+        ...(mode === "split" && {
+          split: splitDetailsFor(enteredAmount, sharePercent, direction),
+        }),
       });
 
       const delivery = await sendTransactionEmail(pair.id, transactionRef.id);
@@ -69,45 +94,19 @@ export default function TransactionForm({ pair, onClose }: TransactionFormProps)
     <div className="card border-blue-200">
       <h3 className="font-semibold text-sm mb-3">New Transaction</h3>
       <form onSubmit={handleSubmit} className="space-y-3">
-        {/* Direction toggle */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setDirection("i_paid")}
-            className={`py-2 px-3 rounded-lg text-sm font-medium border transition-colors ${
-              direction === "i_paid"
-                ? "bg-green-50 border-green-300 text-green-700"
-                : "border-gray-200 text-gray-500 hover:bg-gray-50"
-            }`}
-          >
-            ↑ I paid {partnerName.split(" ")[0]}
-          </button>
-          <button
-            type="button"
-            onClick={() => setDirection("they_paid")}
-            className={`py-2 px-3 rounded-lg text-sm font-medium border transition-colors ${
-              direction === "they_paid"
-                ? "bg-blue-50 border-blue-300 text-blue-700"
-                : "border-gray-200 text-gray-500 hover:bg-gray-50"
-            }`}
-          >
-            ↓ {partnerName.split(" ")[0]} paid me
-          </button>
-        </div>
-
-        {/* Amount */}
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Amount ({pair.currency})</label>
-          <input
-            type="number"
-            step="0.01"
-            className="input-field text-lg font-semibold"
-            placeholder="0.00"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            autoFocus
-          />
-        </div>
+        <TransactionEntryFields
+          partnerName={partnerName}
+          currency={pair.currency}
+          mode={mode}
+          onModeChange={setMode}
+          direction={direction}
+          onDirectionChange={setDirection}
+          amount={amount}
+          onAmountChange={setAmount}
+          creatorSharePercent={creatorSharePercent}
+          onCreatorSharePercentChange={setCreatorSharePercent}
+          autoFocus
+        />
 
         {/* Description */}
         <div>

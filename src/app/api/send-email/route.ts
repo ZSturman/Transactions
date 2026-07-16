@@ -198,11 +198,23 @@ async function buildTransactionDelivery(
   const toName = String(recipientProfile.displayName || userNames[recipientIndex] || userEmails[recipientIndex] || "there");
   const isSettlement = transaction.type === "settlement";
   const isApproved = transaction.status === "approved";
-  const action = transaction.type === "request" ? "requested" : "recorded a payment of";
+  const recipientOwesActor = transaction.type === "payment";
+  const pendingSummary = recipientOwesActor
+    ? `${fromName} says you owe them ${amount}`
+    : `${fromName} says they owe you ${amount}`;
+  const split = transaction.split && typeof transaction.split === "object"
+    ? transaction.split as Record<string, unknown>
+    : null;
+  const splitTotal = split && Number.isFinite(Number(split.totalAmount))
+    ? formatAmount(Number(split.totalAmount), String(pair.currency || "USD"))
+    : null;
+  const splitContext = splitTotal
+    ? ` This is part of a ${splitTotal} shared expense.`
+    : "";
   const message = body.type === "transaction"
     ? isSettlement
       ? `${fromName} requested to settle the shared balance of ${amount}. Review and approve or deny the request in Transactions.`
-      : `${fromName} ${action} ${amount}${description}. Review the transaction in Transactions.`
+      : `${pendingSummary}${description}.${splitContext} Review the transaction in Transactions.`
     : isSettlement
     ? isApproved
       ? `${fromName} approved your settlement request of ${amount}. The shared balance is now settled.`
@@ -220,7 +232,7 @@ async function buildTransactionDelivery(
       body.type === "transaction"
         ? isSettlement
           ? `${fromName} requested a settlement of ${amount}`
-          : `${fromName} ${action} ${amount}`
+          : pendingSummary
         : isSettlement
         ? `Settlement ${isApproved ? "approved" : "denied"}: ${amount}`
         : `Transaction ${isApproved ? "approved" : "disputed"}: ${amount}`,

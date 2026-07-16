@@ -43,6 +43,19 @@ export interface Pair {
 export type TransactionStatus = "pending" | "approved" | "disputed";
 export type TransactionType = "payment" | "request" | "adjustment" | "settlement" | "forgiveness";
 
+/**
+ * Extra context for an expense that was divided between the two people. The
+ * transaction amount remains the amount one person owes the other, so split
+ * expenses use the exact same balance calculation as existing transactions.
+ */
+export interface SplitDetails {
+  totalAmount: number;
+  /** The percentage of the total paid/owed by the person who created the transaction. */
+  creatorSharePercent: number;
+  /** Which person paid the full bill before the split was recorded. */
+  paidBy: "creator" | "partner";
+}
+
 export interface Transaction {
   id: string;
   pairId: string;
@@ -63,6 +76,7 @@ export interface Transaction {
   /** Stable key used to skip duplicate rows in CSV imports. */
   importFingerprint?: string;
   importBatchId?: string;
+  split?: SplitDetails;
 }
 
 // ─── Balance Snapshots ──────────────────────────────────
@@ -82,6 +96,7 @@ export interface PendingTransaction {
   type: TransactionType;
   description: string;
   date: string; // ISO date string (YYYY-MM-DD)
+  split?: SplitDetails;
 }
 
 export interface Invite {

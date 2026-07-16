@@ -235,7 +235,7 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
     await loginViaUI(page, alice);
     await page.goto(`/pair/${pairId}`);
     await page.getByRole("button", { name: "+ Transaction" }).click();
-    await page.getByRole("button", { name: "↓ Bob paid me" }).click();
+    await page.getByRole("button", { name: "You owe Bob" }).click();
     await page.getByPlaceholder("0.00").fill("25");
     await page.getByPlaceholder("e.g. Dinner, Rent, Groceries").fill("Refund");
     await page.getByRole("button", { name: "Record Transaction" }).click();

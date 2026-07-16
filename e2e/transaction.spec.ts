@@ -6,6 +6,8 @@ import {
   createPair,
   createTransaction,
   captureEmailCalls,
+  getFirestoreDocument,
+  listFirestoreDocuments,
   loginViaUI,
 } from "./helpers";
 
@@ -155,5 +157,78 @@ test.describe("Transaction flow", () => {
     await page.getByRole("button", { name: "Record Transaction" }).click();
 
     await expect(page.getByText("Enter a valid amount")).toBeVisible({ timeout: 8_000 });
+  });
+
+  test("records a custom split using only the amount the partner owes", async ({ page, browser }) => {
+    const { userA, pairId } = await setupPair();
+    captureEmailCalls(page);
+    await loginViaUI(page, { email: "alice@tx-test.com", password: "password123" });
+    await page.goto(`/pair/${pairId}`);
+
+    await page.getByRole("button", { name: "+ Transaction" }).click();
+    await page.getByRole("button", { name: "Split an expense" }).click();
+    await page.getByLabel("Total shared expense").fill("500");
+    await page.getByLabel("Your share percentage").fill("20");
+    await expect(page.getByText("Bob owes you $400.00")).toBeVisible();
+    await page.getByPlaceholder("e.g. Dinner, Rent, Groceries").fill("Celebration meal");
+    await page.getByRole("button", { name: "Record Transaction" }).click();
+
+    await expect(page.getByText("Transaction recorded — waiting for approval")).toBeVisible({ timeout: 8_000 });
+    const [created] = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
+    expect(created?.data).toMatchObject({
+      amount: 400,
+      type: "payment",
+      createdBy: userA.uid,
+      split: {
+        totalAmount: 500,
+        creatorSharePercent: 20,
+        paidBy: "creator",
+      },
+    });
+
+    const ctxB = await browser.newContext();
+    const pageB = await ctxB.newPage();
+    try {
+      captureEmailCalls(pageB);
+      await loginViaUI(pageB, { email: "bob@tx-test.com", password: "password123" });
+      await pageB.goto(`/pair/${pairId}`);
+      await expect(pageB.getByText("Split expense · You owe Alice")).toBeVisible();
+      await expect(pageB.getByText("We spent $500.00 · you 80% / Alice 20%. Alice paid the bill.")).toBeVisible();
+      await pageB.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect(pageB.getByText("Transaction approved — balance updated!")).toBeVisible({ timeout: 8_000 });
+      await expect.poll(async () => (await getFirestoreDocument(`pairs/${pairId}`))?.balance).toBe(400);
+    } finally {
+      await ctxB.close();
+    }
+  });
+
+  test("approves or declines every pending transaction from the dashboard", async ({ page }) => {
+    const { userA, pairId } = await setupPair();
+    await Promise.all([
+      createTransaction({ id: "bulk-approve-one", pairId, amount: 20, type: "payment", createdBy: userA.uid }),
+      createTransaction({ id: "bulk-approve-two", pairId, amount: 30, type: "payment", createdBy: userA.uid }),
+    ]);
+    captureEmailCalls(page);
+    await loginViaUI(page, { email: "bob@tx-test.com", password: "password123" });
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Approve all" }).click();
+    await expect(page.getByText("Approved all 2 pending transactions")).toBeVisible({ timeout: 8_000 });
+    await expect.poll(async () => (await getFirestoreDocument(`pairs/${pairId}`))?.balance).toBe(50);
+
+    await Promise.all([
+      createTransaction({ id: "bulk-decline-one", pairId, amount: 15, type: "payment", createdBy: userA.uid }),
+      createTransaction({ id: "bulk-decline-two", pairId, amount: 25, type: "request", createdBy: userA.uid }),
+    ]);
+    await expect(page.getByRole("button", { name: "Decline all" })).toBeVisible({ timeout: 8_000 });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Decline all" }).click();
+    await expect(page.getByText("Declined all 2 pending transactions")).toBeVisible({ timeout: 8_000 });
+    await expect.poll(async () => {
+      const transactions = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
+      return transactions
+        .filter((transaction) => transaction.id.startsWith("bulk-decline"))
+        .every((transaction) => transaction.data.status === "disputed");
+    }).toBe(true);
   });
 });

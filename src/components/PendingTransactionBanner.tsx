@@ -7,11 +7,13 @@ import { PairTransaction } from "@/hooks/useAllTransactions";
 import { formatAmount } from "@/utils/currency";
 import {
   approveTransaction,
+  declineTransaction,
   disputeTransaction,
   denySettlement,
   acceptCounter,
   rejectCounter,
 } from "@/utils/transactionActions";
+import { obligationText, partnerNameFor } from "@/utils/transactionPresentation";
 import DisputeWithCounterForm from "@/components/DisputeWithCounterForm";
 import toast from "react-hot-toast";
 
@@ -27,6 +29,7 @@ export default function PendingTransactionBanner({
   const { user } = useAuth();
   const [disputingId, setDisputingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [bulkAction, setBulkAction] = useState<"approve" | "decline" | null>(null);
 
   const userPendingTxs = pendingTxs.filter(
     (tx) => tx.createdBy !== user?.uid
@@ -34,13 +37,14 @@ export default function PendingTransactionBanner({
 
   if (!user || userPendingTxs.length === 0) return null;
 
+  const userId = user.uid;
   const pairById = Object.fromEntries(pairs.map((p) => [p.id, p]));
   async function handleApprove(tx: PairTransaction) {
     const pair = pairById[tx.pairId];
     if (!pair) return;
     setLoadingId(tx.id);
     try {
-      await approveTransaction(pair, tx, user!.uid);
+      await approveTransaction(pair, tx, userId);
       toast.success(
         tx.type === "settlement"
           ? "Settlement approved — balance updated!"
@@ -58,7 +62,7 @@ export default function PendingTransactionBanner({
     if (!pair) return;
     setLoadingId(tx.id);
     try {
-      await denySettlement(pair, tx, user!.uid);
+      await denySettlement(pair, tx, userId);
       toast.success("Settlement request denied");
     } catch (err: any) {
       toast.error(err.message || "Failed to deny settlement request");
@@ -79,7 +83,7 @@ export default function PendingTransactionBanner({
       await disputeTransaction(
         pair,
         tx,
-        user!.uid,
+        userId,
         reason,
         proposedAmount
       );
@@ -97,7 +101,7 @@ export default function PendingTransactionBanner({
     if (!pair) return;
     setLoadingId(tx.id);
     try {
-      await acceptCounter(pair, tx, user!.uid);
+      await acceptCounter(pair, tx, userId);
       toast.success("Counter-proposal accepted!");
     } catch (err: any) {
       toast.error(err.message || "Failed to accept counter");
@@ -120,24 +124,80 @@ export default function PendingTransactionBanner({
     }
   }
 
+  async function handleBulkResolution(action: "approve" | "decline") {
+    if (action === "decline" && !confirm(`Decline all ${userPendingTxs.length} pending transaction${userPendingTxs.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+      return;
+    }
+
+    setBulkAction(action);
+    let resolved = 0;
+    let failed = 0;
+    // Settlements must be processed before ordinary transactions so their
+    // balance snapshot is validated before any newly approved debt changes it.
+    const ordered = [...userPendingTxs].sort(
+      (a, b) => Number(b.type === "settlement") - Number(a.type === "settlement")
+    );
+    for (const tx of ordered) {
+      const pair = pairById[tx.pairId];
+      if (!pair) {
+        failed += 1;
+        continue;
+      }
+      try {
+        if (action === "approve") await approveTransaction(pair, tx, userId);
+        else await declineTransaction(pair, tx, userId);
+        resolved += 1;
+      } catch (err) {
+        console.error(`Unable to ${action} transaction ${tx.id}:`, err);
+        failed += 1;
+      }
+    }
+    setBulkAction(null);
+    if (failed === 0) {
+      toast.success(`${action === "approve" ? "Approved" : "Declined"} all ${resolved} pending transaction${resolved === 1 ? "" : "s"}`);
+    } else {
+      toast.error(`${action === "approve" ? "Approved" : "Declined"} ${resolved} of ${userPendingTxs.length}; ${failed} could not be resolved`);
+    }
+  }
+
   return (
     <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 p-4">
-      <h2 className="text-sm font-bold text-amber-800 mb-3 flex items-center gap-2">
-        <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-        {userPendingTxs.length === 1
-          ? "1 Transaction Needs Your Attention"
-          : `${userPendingTxs.length} Transactions Need Your Attention`}
-      </h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-bold text-amber-800">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          {userPendingTxs.length === 1
+            ? "1 Transaction Needs Your Attention"
+            : `${userPendingTxs.length} Transactions Need Your Attention`}
+        </h2>
+        {userPendingTxs.length > 1 && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleBulkResolution("approve")}
+              disabled={bulkAction !== null}
+              className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              {bulkAction === "approve" ? "Approving…" : "Approve all"}
+            </button>
+            <button
+              onClick={() => handleBulkResolution("decline")}
+              disabled={bulkAction !== null}
+              className="btn-danger px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              {bulkAction === "decline" ? "Declining…" : "Decline all"}
+            </button>
+          </div>
+        )}
+      </div>
       <div className="space-y-2">
         {userPendingTxs.map((tx) => {
           const pair = pairById[tx.pairId];
           if (!pair) return null;
-          const userIdx = pair.users.indexOf(user.uid);
-          const partnerName = pair.userNames[userIdx === 0 ? 1 : 0];
+          const partnerName = partnerNameFor(pair, userId);
+          const obligation = obligationText(tx, pair, userId);
           const isDisputing = disputingId === tx.id;
           const isLoading = loadingId === tx.id;
           const isCounterDisputed =
-            tx.status === "disputed" && tx.proposedAmount !== undefined && tx.createdBy === user.uid;
+            tx.status === "disputed" && tx.proposedAmount !== undefined && tx.createdBy === userId;
 
           return (
             <div
@@ -146,17 +206,12 @@ export default function PendingTransactionBanner({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  {/* Direction-aware summary */}
-                  {tx.type === "payment" ? (
+                  {tx.type === "payment" || tx.type === "request" ? (
                     <p className="text-sm font-semibold text-gray-800">
-                      <span className="text-green-600">↓ {partnerName} paid you</span>
+                      <span className={obligation?.startsWith("You owe") ? "text-red-600" : "text-green-600"}>
+                        {tx.split ? `Split expense · ${obligation}` : obligation}
+                      </span>
                       {" "}<span className="font-bold">{formatAmount(tx.amount, pair.currency)}</span>
-                    </p>
-                  ) : tx.type === "request" ? (
-                    <p className="text-sm font-semibold text-gray-800">
-                      <span className="text-blue-600">↑ {partnerName} is requesting</span>
-                      {" "}<span className="font-bold">{formatAmount(tx.amount, pair.currency)}</span>
-                      <span className="text-blue-600"> from you</span>
                     </p>
                   ) : tx.type === "settlement" ? (
                     <p className="text-sm font-semibold text-gray-800">
@@ -173,6 +228,11 @@ export default function PendingTransactionBanner({
                   )}
                   {tx.description && (
                     <p className="text-xs text-gray-500 mt-0.5 truncate">{tx.description}</p>
+                  )}
+                  {tx.split && (
+                    <p className="mt-0.5 text-xs text-blue-700">
+                      We spent {formatAmount(tx.split.totalAmount, pair.currency)} · you {tx.createdBy === userId ? tx.split.creatorSharePercent : 100 - tx.split.creatorSharePercent}% / {partnerName} {tx.createdBy === userId ? 100 - tx.split.creatorSharePercent : tx.split.creatorSharePercent}%
+                    </p>
                   )}
                   {tx.disputeReason && (
                     <p className="text-xs text-red-500 mt-0.5">

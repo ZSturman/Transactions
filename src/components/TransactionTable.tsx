@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Pair, Transaction } from "@/types";
 import { formatAmount } from "@/utils/currency";
 import { useAuth } from "@/contexts/AuthContext";
+import { obligationText, transactionTypeLabel } from "@/utils/transactionPresentation";
 
 type SortKey = "date" | "person" | "amount" | "type" | "status";
 type SortDir = "asc" | "desc";
@@ -24,14 +25,6 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
   approved: "bg-green-100 text-green-700",
   disputed: "bg-red-100 text-red-700",
-};
-
-const TYPE_LABELS: Record<string, string> = {
-  payment: "Payment",
-  request: "Request",
-  adjustment: "Adjustment",
-  settlement: "Settlement",
-  forgiveness: "Forgiven",
 };
 
 export default function TransactionTable({
@@ -186,7 +179,7 @@ export default function TransactionTable({
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 Description
               </th>
-              <SortHeader label="Type" colKey="type" />
+              <SortHeader label="Balance effect" colKey="type" />
               <SortHeader label="Amount" colKey="amount" />
               <SortHeader label="Status" colKey="status" />
               {(onArchive || onUnarchive) && (
@@ -205,6 +198,16 @@ export default function TransactionTable({
                   ? pair.userNames[userIdx === 0 ? 1 : 0]
                   : "—";
               const isCreator = tx.createdBy === user?.uid;
+              const obligation = user && pair ? obligationText(tx, pair, user.uid) : null;
+              const amountColor = tx.type === "settlement"
+                ? "text-green-600"
+                : tx.type === "forgiveness"
+                ? "text-purple-600"
+                : obligation?.startsWith("You owe")
+                ? "text-red-600"
+                : obligation
+                ? "text-green-600"
+                : "text-blue-600";
               const isPending = tx.status === "pending" && !isCreator;
               const isSettlementRequest = isPending && tx.type === "settlement";
               const statusLabel = tx.type === "settlement"
@@ -250,18 +253,13 @@ export default function TransactionTable({
                   <td className="px-3 py-2.5 text-sm text-gray-600 max-w-[200px] truncate">
                     {tx.description || <span className="text-gray-300">—</span>}
                   </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap capitalize">
-                    {TYPE_LABELS[tx.type] ?? tx.type}
+                  <td className="px-3 py-2.5 text-xs whitespace-nowrap">
+                    <p className="font-medium text-gray-600">{transactionTypeLabel(tx)}</p>
+                    {obligation && <p className="mt-0.5 text-gray-500">{obligation}</p>}
                   </td>
                   <td className="px-3 py-2.5 text-sm font-semibold whitespace-nowrap">
                     <span
-                      className={
-                        tx.type === "payment" || tx.type === "settlement"
-                          ? "text-green-600"
-                          : tx.type === "forgiveness"
-                          ? "text-purple-600"
-                          : "text-blue-600"
-                      }
+                      className={amountColor}
                     >
                       {pair ? formatAmount(tx.amount, pair.currency) : tx.amount.toFixed(2)}
                     </span>

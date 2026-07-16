@@ -45,7 +45,7 @@ const BATCH_SIZE = 400;
 const FIELD_OPTIONS: Array<{ value: FieldKey; label: string; required?: boolean }> = [
   { value: "ignore", label: "— Ignore —" },
   { value: "amount", label: "Amount", required: true },
-  { value: "direction", label: "Direction (who paid)" },
+  { value: "direction", label: "Balance effect (who owes)" },
   { value: "description", label: "Description" },
   { value: "date", label: "Date" },
   { value: "type", label: "Type (payment/request)" },
@@ -53,7 +53,7 @@ const FIELD_OPTIONS: Array<{ value: FieldKey; label: string; required?: boolean 
 
 const HEADER_HEURISTICS: Array<{ expression: RegExp; field: FieldKey }> = [
   { expression: /^(amount|amt|total|sum|value|price|cost|paid)$/i, field: "amount" },
-  { expression: /^(direction|paid by|payer|who paid|side|flow)$/i, field: "direction" },
+  { expression: /^(direction|paid by|payer|who paid|side|flow|balance effect|who owes|owed by)$/i, field: "direction" },
   { expression: /^(description|desc|note|notes|memo|details|reason|for)$/i, field: "description" },
   { expression: /^(date|when|event date|tx date|transaction date|created at)$/i, field: "date" },
   { expression: /^(type|kind|category|transaction type)$/i, field: "type" },
@@ -124,15 +124,18 @@ function parseAmount(value: string): { amount: number | null; negative: boolean 
 function parseDirection(value: string): Direction | null {
   const normalized = value.trim().toLowerCase().replace(/[._-]/g, " ").replace(/\s+/g, " ");
   if (!normalized) return null;
-  if (/^(i|me|myself|you|outgoing|payment|paid|i paid|paid by me|debit)$/.test(normalized)) return "i_paid";
-  if (/^(they|them|partner|other|incoming|request|received|they paid|paid to me|credit)$/.test(normalized)) return "they_paid";
+  // "i_paid" means the other person owes the importer; "they_paid" means
+  // the importer owes the other person. Accept the old paid/request wording
+  // as well as direct, unambiguous balance wording.
+  if (/^(i|me|myself|you|outgoing|payment|paid|i paid|paid by me|debit|they owe|they owe me|partner owes|partner owes me|owed to me|they requested)$/.test(normalized)) return "i_paid";
+  if (/^(they|them|partner|other|incoming|request|received|they paid|paid to me|credit|i owe|i owe them|i requested)$/.test(normalized)) return "they_paid";
   return null;
 }
 
 function parseType(value: string): TransactionType | null {
   const normalized = value.trim().toLowerCase();
-  if (["payment", "paid", "expense"].includes(normalized)) return "payment";
-  if (["request", "requested", "receive", "received"].includes(normalized)) return "request";
+  if (["payment", "paid", "expense", "i paid", "they owe", "they owe me", "they requested"].includes(normalized)) return "payment";
+  if (["request", "requested", "receive", "received", "they paid", "i owe", "i owe them", "i requested"].includes(normalized)) return "request";
   if (["adjustment", "adjust"].includes(normalized)) return "adjustment";
   return null;
 }
@@ -371,7 +374,7 @@ function UploadStep({ onFile }: { onFile: (file: File) => void }) {
       <input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
       <p className="text-sm font-medium text-gray-700">Drop a CSV here, or click to browse</p><p className="mt-1 text-xs text-gray-500">Up to 10 MB or 20,000 rows. The first row must contain unique column names.</p>
     </label>
-    <div className="rounded-lg bg-gray-50 p-3 text-xs leading-5 text-gray-600"><p className="font-semibold text-gray-700">Supported formats</p><p>Amount is required. Provide either a direction (for example, “I paid” or “They paid”) or a type (“payment” or “request”). Descriptions and dates are optional.</p></div>
+    <div className="rounded-lg bg-gray-50 p-3 text-xs leading-5 text-gray-600"><p className="font-semibold text-gray-700">Supported formats</p><p>Amount is required. Provide either a balance effect (for example, “Partner owes me” or “I owe partner”) or a type (“payment” or “request”). Legacy “I paid” and “They paid” values still work. Descriptions and dates are optional.</p></div>
   </div>;
 }
 
@@ -386,7 +389,7 @@ function MappingStep({ headers, mapping, setMapping, fileName, rowCount, example
   return <div className="space-y-4"><div><p className="text-sm text-gray-700"><span className="font-medium">{fileName}</span><span className="text-gray-500"> · {rowCount.toLocaleString()} rows</span></p><p className="mt-1 text-xs text-gray-500">We auto-mapped familiar names. Adjust anything that doesn&apos;t look right.</p></div>
     {parseIssues.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><p className="font-semibold">CSV formatting warnings</p>{parseIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>}
     <div className="divide-y divide-gray-100 rounded-lg border border-gray-200">{headers.map((header) => <div key={header} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-medium text-gray-800">{header}</p>{example?.[header] && <p className="truncate text-xs text-gray-400">Example: {example[header]}</p>}</div><span className="text-xs text-gray-400">→</span><select value={mapping[header] ?? "ignore"} onChange={(event) => update(header, event.target.value as FieldKey)} className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm">{FIELD_OPTIONS.map((option) => <option key={option.value} value={option.value} disabled={option.value !== "ignore" && used.has(option.value) && mapping[header] !== option.value}>{option.label}{option.required ? " *" : ""}</option>)}</select></div>)}</div>
-    <p className="text-xs text-gray-500">* Amount is required. Also map Direction or Type; a payment/request type supplies the direction automatically.</p>
+    <p className="text-xs text-gray-500">* Amount is required. Also map Balance effect or Type; a payment/request type supplies the balance effect automatically.</p>
   </div>;
 }
 
@@ -394,7 +397,7 @@ function PreviewStep({ rows, currency, invalidCount, duplicateCount, skipInvalid
   const preview = rows.slice(0, 30);
   const ready = rows.length - invalidCount - duplicateCount;
   return <div className="space-y-3"><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-green-100 px-2 py-0.5 font-medium text-green-700">{ready.toLocaleString()} ready</span>{duplicateCount > 0 && <span className="rounded-full bg-blue-100 px-2 py-0.5 font-medium text-blue-700">{duplicateCount.toLocaleString()} duplicate{duplicateCount === 1 ? "" : "s"} skipped</span>}{invalidCount > 0 && <span className="rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-700">{invalidCount.toLocaleString()} need attention</span>}<span className="ml-auto text-gray-500">Showing {preview.length} of {rows.length.toLocaleString()}</span></div>
-    <div className="overflow-x-auto rounded-lg border border-gray-200"><table className="min-w-full text-xs"><thead className="bg-gray-50 uppercase tracking-wide text-gray-500"><tr><th className="px-2 py-2 text-left">Row</th><th className="px-2 py-2 text-left">Amount</th><th className="px-2 py-2 text-left">Direction</th><th className="px-2 py-2 text-left">Description</th><th className="px-2 py-2 text-left">Date</th><th className="px-2 py-2 text-left">Result</th></tr></thead><tbody className="divide-y divide-gray-100">{preview.map((row) => <tr key={row.rowNumber} className={row.errors.length ? "bg-red-50" : row.duplicate ? "bg-blue-50" : "bg-white"}><td className="px-2 py-1.5 text-gray-400">{row.rowNumber}</td><td className="px-2 py-1.5">{row.amount ? formatAmount(row.amount, currency) : "—"}</td><td className="px-2 py-1.5">{row.direction === "i_paid" ? "You paid" : row.direction === "they_paid" ? "They paid" : "—"}</td><td className="max-w-[190px] truncate px-2 py-1.5 text-gray-600">{row.description || "—"}</td><td className="whitespace-nowrap px-2 py-1.5 text-gray-600">{formatDateKey(row.date)}</td><td className="px-2 py-1.5 text-red-600">{row.errors.join("; ") || (row.duplicate ? <span className="text-blue-700">duplicate — skipped</span> : <span className="text-green-700">ready</span>)}</td></tr>)}</tbody></table></div>
+    <div className="overflow-x-auto rounded-lg border border-gray-200"><table className="min-w-full text-xs"><thead className="bg-gray-50 uppercase tracking-wide text-gray-500"><tr><th className="px-2 py-2 text-left">Row</th><th className="px-2 py-2 text-left">Amount</th><th className="px-2 py-2 text-left">Balance effect</th><th className="px-2 py-2 text-left">Description</th><th className="px-2 py-2 text-left">Date</th><th className="px-2 py-2 text-left">Result</th></tr></thead><tbody className="divide-y divide-gray-100">{preview.map((row) => <tr key={row.rowNumber} className={row.errors.length ? "bg-red-50" : row.duplicate ? "bg-blue-50" : "bg-white"}><td className="px-2 py-1.5 text-gray-400">{row.rowNumber}</td><td className="px-2 py-1.5">{row.amount ? formatAmount(row.amount, currency) : "—"}</td><td className="px-2 py-1.5">{row.direction === "i_paid" ? "Partner owes you" : row.direction === "they_paid" ? "You owe partner" : "—"}</td><td className="max-w-[190px] truncate px-2 py-1.5 text-gray-600">{row.description || "—"}</td><td className="whitespace-nowrap px-2 py-1.5 text-gray-600">{formatDateKey(row.date)}</td><td className="px-2 py-1.5 text-red-600">{row.errors.join("; ") || (row.duplicate ? <span className="text-blue-700">duplicate — skipped</span> : <span className="text-green-700">ready</span>)}</td></tr>)}</tbody></table></div>
     {invalidCount > 0 && <label className="flex items-center gap-2 text-sm text-gray-600"><input type="checkbox" checked={skipInvalid} onChange={(event) => setSkipInvalid(event.target.checked)} className="rounded border-gray-300" />Skip the {invalidCount.toLocaleString()} invalid row{invalidCount === 1 ? "" : "s"} and import the rest</label>}
   </div>;
 }

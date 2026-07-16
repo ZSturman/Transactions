@@ -1,4 +1,5 @@
 import { Pair, Transaction } from "@/types";
+import { obligationText } from "@/utils/transactionPresentation";
 
 type TimestampLike = { toDate?: () => Date } | undefined;
 
@@ -49,7 +50,11 @@ const CSV_HEADER = [
   "Created At",
   "Created By",
   "Type",
+  "Balance Effect",
   "Amount",
+  "Split Total",
+  "Your Split %",
+  "Paid By",
   "Currency",
   "Description",
   "Status",
@@ -59,6 +64,22 @@ const CSV_HEADER = [
   "Import Batch ID",
   "Import Fingerprint",
 ].join(",");
+
+function splitPaidBy(transaction: Transaction, currentUserUid: string) {
+  if (!transaction.split) return "";
+  const creatorIsCurrentUser = transaction.createdBy === currentUserUid;
+  const currentUserPaid = transaction.split.paidBy === "creator"
+    ? creatorIsCurrentUser
+    : !creatorIsCurrentUser;
+  return currentUserPaid ? "You" : "Partner";
+}
+
+function currentUserSplitPercent(transaction: Transaction, currentUserUid: string): number | "" {
+  if (!transaction.split) return "";
+  return transaction.createdBy === currentUserUid
+    ? transaction.split.creatorSharePercent
+    : 100 - transaction.split.creatorSharePercent;
+}
 
 function rowsForPair(transactions: Transaction[], pair: Pair, currentUserUid: string) {
   const partner = partnerFor(pair, currentUserUid);
@@ -73,7 +94,11 @@ function rowsForPair(transactions: Transaction[], pair: Pair, currentUserUid: st
     asIso(transaction.createdAt),
     transaction.createdBy,
     transaction.type,
+    obligationText(transaction, pair, currentUserUid),
     transaction.amount,
+    transaction.split?.totalAmount,
+    currentUserSplitPercent(transaction, currentUserUid),
+    splitPaidBy(transaction, currentUserUid),
     pair.currency,
     transaction.description,
     transaction.status,

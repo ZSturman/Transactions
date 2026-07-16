@@ -9,8 +9,9 @@ import DisputeWithCounterForm from "@/components/DisputeWithCounterForm";
 interface TransactionItemProps {
   transaction: Transaction;
   pair: Pair;
-  onApprove: (tx: Transaction) => void;
-  onDispute: (tx: Transaction, reason: string, proposedAmount?: number) => void;
+  onApprove?: (tx: Transaction) => void;
+  onDispute?: (tx: Transaction, reason: string, proposedAmount?: number) => void;
+  onDenySettlement?: (tx: Transaction) => void;
   onAcceptCounter?: (tx: Transaction) => void;
   onRejectCounter?: (tx: Transaction) => void;
   onArchive?: (tx: Transaction) => void;
@@ -23,6 +24,7 @@ export default function TransactionItem({
   pair,
   onApprove,
   onDispute,
+  onDenySettlement,
   onAcceptCounter,
   onRejectCounter,
   onArchive,
@@ -41,7 +43,7 @@ export default function TransactionItem({
 
   const isPending = tx.status === "pending" && !isCreator;
   const isDisputedWithCounter =
-    tx.status === "disputed" && tx.proposedAmount !== undefined && isCreator;
+    tx.type !== "settlement" && tx.status === "disputed" && tx.proposedAmount !== undefined && isCreator;
 
   const statusColors: Record<string, string> = {
     pending: "bg-yellow-100 text-yellow-700",
@@ -49,6 +51,7 @@ export default function TransactionItem({
     disputed: "bg-red-100 text-red-700",
     settlement: "bg-teal-100 text-teal-700",
     forgiveness: "bg-purple-100 text-purple-700",
+    denied: "bg-red-100 text-red-700",
   };
 
   const displayDate = (tx.date ?? tx.createdAt)?.toDate?.();
@@ -62,7 +65,11 @@ export default function TransactionItem({
 
   let label: string;
   if (tx.type === "settlement") {
-    label = isCreator ? "You settled" : `${isDeleted ? "[Deleted Account]" : creatorName} settled`;
+    label = tx.status === "approved"
+      ? isCreator ? "You settled" : `${isDeleted ? "[Deleted Account]" : creatorName} settled`
+      : tx.status === "disputed"
+      ? isCreator ? "Your settlement request was denied" : `${isDeleted ? "[Deleted Account]" : creatorName} requested settlement`
+      : isCreator ? "You requested settlement" : `${isDeleted ? "[Deleted Account]" : creatorName} requested settlement`;
   } else if (tx.type === "forgiveness") {
     label = isCreator
       ? "You forgave"
@@ -75,7 +82,15 @@ export default function TransactionItem({
       : `${isDeleted ? "[Deleted Account]" : creatorName} requested`;
   }
 
-  const statusLabel = tx.type === "settlement" ? "settled" : tx.type === "forgiveness" ? "forgiven" : tx.status;
+  const statusLabel = tx.type === "settlement"
+    ? tx.status === "approved"
+      ? "settled"
+      : tx.status === "disputed"
+      ? "denied"
+      : "pending"
+    : tx.type === "forgiveness"
+    ? "forgiven"
+    : tx.status;
 
   return (
     <div
@@ -124,7 +139,18 @@ export default function TransactionItem({
       </div>
 
       {/* Pending: approve or dispute */}
-      {isPending && (
+      {isPending && tx.type === "settlement" && onApprove && onDenySettlement && (
+        <div className="mt-3 pt-3 border-t border-gray-100 flex gap-2">
+          <button onClick={() => onApprove(tx)} className="btn-primary text-xs px-3 py-1">
+            Approve
+          </button>
+          <button onClick={() => onDenySettlement(tx)} className="btn-danger text-xs px-3 py-1">
+            Deny
+          </button>
+        </div>
+      )}
+
+      {isPending && tx.type !== "settlement" && onApprove && onDispute && (
         <div className="mt-3 pt-3 border-t border-gray-100">
           {!showDispute ? (
             <div className="flex gap-2">

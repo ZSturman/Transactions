@@ -43,7 +43,7 @@ export default function SettleModal({ pair, onConfirm, onClose }: SettleModalPro
         <div>
           <h2 className="text-lg font-bold text-gray-900">Settle Up</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Mark the full balance as settled.
+            Ask {partnerName} to approve settling the full balance.
           </p>
         </div>
 
@@ -53,8 +53,8 @@ export default function SettleModal({ pair, onConfirm, onClose }: SettleModalPro
         </div>
 
         <p className="text-xs text-gray-400">
-          This creates a settlement transaction that zeroes the balance between
-          you and {partnerName}. Both parties can see it in the transaction history.
+          This sends a settlement request to {partnerName}. The balance changes
+          only after they approve it; if it changes first, you can send a new request.
         </p>
 
         <div className="flex gap-3">
@@ -63,7 +63,7 @@ export default function SettleModal({ pair, onConfirm, onClose }: SettleModalPro
             className="btn-primary flex-1"
             disabled={loading}
           >
-            {loading ? "Settling…" : "Confirm Settle"}
+            {loading ? "Sending…" : "Request Settlement"}
           </button>
           <button
             onClick={onClose}

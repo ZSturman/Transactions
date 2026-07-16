@@ -3,6 +3,7 @@ import {
   captureEmailCalls,
   clearAllEmulatorData,
   createAuthUser,
+  createBalanceSnapshot,
   createPair,
   createTransaction,
   createUserProfile,
@@ -16,7 +17,7 @@ import {
 const alice = { email: "alice@pair-lifecycle.test", password: "password123" };
 const bob = { email: "bob@pair-lifecycle.test", password: "password123" };
 
-async function setupPair(balance = 0) {
+async function setupPair(balance = 0, hidden = false) {
   const [userA, userB] = await Promise.all([
     createAuthUser(alice.email, alice.password),
     createAuthUser(bob.email, bob.password),
@@ -37,6 +38,7 @@ async function setupPair(balance = 0) {
     user2Name: "Bob",
     balance,
     status: "active",
+    hidden,
   });
 
   return { pairId, userA, userB };
@@ -60,18 +62,59 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
     await clearAllEmulatorData();
   });
 
-  test("settles an active balance, writes a settlement and balance snapshot", async ({ page }) => {
+  test("requires the partner to approve a settlement request before zeroing the balance", async ({ page, browser }) => {
     const { pairId, userA } = await setupPair(75);
+    await createBalanceSnapshot({
+      id: "starting-balance",
+      pairId,
+      balance: 75,
+      triggeredBy: userA.uid,
+    });
     const failures = trackFirebaseFailures(page);
+    captureEmailCalls(page);
 
     await loginViaUI(page, alice);
     await page.goto(`/pair/${pairId}`);
     await page.getByRole("button", { name: "Settle Balance" }).click();
     await expect(page.getByRole("heading", { name: "Settle Up" })).toBeVisible();
-    await page.getByRole("button", { name: "Confirm Settle" }).click();
-    await expect(page.getByText("Balance settled!")).toBeVisible({ timeout: 8_000 });
+    await page.getByRole("button", { name: "Request Settlement" }).click();
+    await expect(page.getByText("Settlement request sent — waiting for approval")).toBeVisible({ timeout: 8_000 });
 
-    await expect.poll(async () => (await pairData(pairId)).balance).toBe(0);
+    await expect.poll(async () => (await pairData(pairId)).balance).toBe(75);
+    const pendingTransactions = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
+    expect(pendingTransactions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            amount: 75,
+            type: "settlement",
+            status: "pending",
+            createdBy: userA.uid,
+            balanceAtRequest: 75,
+          }),
+        }),
+      ])
+    );
+
+    const recipientContext = await browser.newContext();
+    const recipientPage = await recipientContext.newPage();
+    const recipientFailures = trackFirebaseFailures(recipientPage);
+    try {
+      captureEmailCalls(recipientPage);
+      await loginViaUI(recipientPage, bob);
+      await recipientPage.goto("/");
+      await expect(recipientPage.getByText("1 Transaction Needs Your Attention")).toBeVisible({ timeout: 8_000 });
+      await recipientPage.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect(recipientPage.getByText("Settlement approved — balance updated!")).toBeVisible({ timeout: 8_000 });
+
+      await expect.poll(async () => (await pairData(pairId)).balance).toBe(0);
+      await recipientPage.goto(`/pair/${pairId}`);
+      await expect(recipientPage.locator('path[stroke="#9ca3af"]').first()).toBeVisible({ timeout: 8_000 });
+      expectNoFirebaseFailures(failures, recipientFailures);
+    } finally {
+      await recipientContext.close();
+    }
+
     const transactions = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
     expect(transactions).toEqual(
       expect.arrayContaining([
@@ -88,10 +131,100 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
     const snapshots = await listFirestoreDocuments(`pairs/${pairId}/balanceSnapshots`);
     expect(snapshots).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ data: expect.objectContaining({ balance: 0, reason: "settled" }) }),
+        expect.objectContaining({ data: expect.objectContaining({ balance: 0, reason: "settlement approved" }) }),
       ])
     );
+  });
+
+  test("shows pending dashboard actions for a legacy hidden connection", async ({ page }) => {
+    const { pairId, userA } = await setupPair(0, true);
+    await createTransaction({
+      id: "legacy-hidden-pending",
+      pairId,
+      amount: 30,
+      type: "payment",
+      description: "New request after archiving history",
+      createdBy: userA.uid,
+      status: "pending",
+    });
+    const failures = trackFirebaseFailures(page);
+    captureEmailCalls(page);
+
+    await loginViaUI(page, bob);
+    await page.goto("/");
+    await expect(page.getByText("1 Transaction Needs Your Attention")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("New request after archiving history")).toBeVisible();
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect(page.getByText("Transaction approved — balance updated!")).toBeVisible({ timeout: 8_000 });
+    await expect.poll(async () => (await pairData(pairId)).balance).toBe(30);
     expectNoFirebaseFailures(failures);
+  });
+
+  test("leaves the balance unchanged when a settlement request is denied", async ({ page, browser }) => {
+    const { pairId } = await setupPair(60);
+    const requesterFailures = trackFirebaseFailures(page);
+    captureEmailCalls(page);
+
+    await loginViaUI(page, alice);
+    await page.goto(`/pair/${pairId}`);
+    await page.getByRole("button", { name: "Settle Balance" }).click();
+    await page.getByRole("button", { name: "Request Settlement" }).click();
+    await expect(page.getByText("Settlement request sent — waiting for approval")).toBeVisible({ timeout: 8_000 });
+
+    const recipientContext = await browser.newContext();
+    const recipientPage = await recipientContext.newPage();
+    const recipientFailures = trackFirebaseFailures(recipientPage);
+    try {
+      captureEmailCalls(recipientPage);
+      await loginViaUI(recipientPage, bob);
+      await recipientPage.goto("/");
+      await recipientPage.getByRole("button", { name: "Deny", exact: true }).click();
+      await expect(recipientPage.getByText("Settlement request denied")).toBeVisible({ timeout: 8_000 });
+      await expect.poll(async () => (await pairData(pairId)).balance).toBe(60);
+      const [settlement] = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
+      expect(settlement.data).toMatchObject({ type: "settlement", status: "disputed" });
+      expectNoFirebaseFailures(requesterFailures, recipientFailures);
+    } finally {
+      await recipientContext.close();
+    }
+  });
+
+  test("requires a new settlement request when the balance changes before approval", async ({ page, browser }) => {
+    const { pairId } = await setupPair(75);
+    captureEmailCalls(page);
+
+    await loginViaUI(page, alice);
+    await page.goto(`/pair/${pairId}`);
+    await page.getByRole("button", { name: "Settle Balance" }).click();
+    await page.getByRole("button", { name: "Request Settlement" }).click();
+    await expect(page.getByText("Settlement request sent — waiting for approval")).toBeVisible({ timeout: 8_000 });
+
+    const recipientContext = await browser.newContext();
+    const recipientPage = await recipientContext.newPage();
+    try {
+      captureEmailCalls(recipientPage);
+      await loginViaUI(recipientPage, bob);
+      await recipientPage.goto(`/pair/${pairId}`);
+      await recipientPage.getByRole("button", { name: "+ Transaction" }).click();
+      await recipientPage.getByPlaceholder("0.00").fill("10");
+      await recipientPage.getByRole("button", { name: "Record Transaction" }).click();
+      await expect(recipientPage.getByText("Transaction recorded — waiting for approval")).toBeVisible({ timeout: 8_000 });
+
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect(page.getByText("Transaction approved — balance updated!")).toBeVisible({ timeout: 8_000 });
+      await expect.poll(async () => (await pairData(pairId)).balance).toBe(65);
+
+      await recipientPage.goto("/");
+      await recipientPage.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect(recipientPage.getByText("The balance changed after this settlement was requested. Send a new request.")).toBeVisible({ timeout: 8_000 });
+      await expect.poll(async () => (await pairData(pairId)).balance).toBe(65);
+      const settlement = (await listFirestoreDocuments(`pairs/${pairId}/transactions`)).find(
+        (transaction) => transaction.data.type === "settlement"
+      );
+      expect(settlement?.data.status).toBe("pending");
+    } finally {
+      await recipientContext.close();
+    }
   });
 
   test("records the opposite payment direction and the partner can approve it", async ({ page, browser }) => {
@@ -288,7 +421,7 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
     expectNoFirebaseFailures(failures);
   });
 
-  test("archives all resolved history, hides the balance, and restores it from the dashboard", async ({ page }) => {
+  test("archives resolved history without hiding the active connection", async ({ page }) => {
     const { pairId, userA } = await setupPair();
     await Promise.all([
       createTransaction({
@@ -317,17 +450,59 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "Archive resolved transactions" }).click();
     await expect(page.getByText("Archived 2 transactions")).toBeVisible({ timeout: 8_000 });
-    await expect.poll(async () => (await pairData(pairId)).hidden).toBe(true);
     const archivedTransactions = await listFirestoreDocuments(`pairs/${pairId}/transactions`);
     expect(archivedTransactions.every((transaction) => transaction.data.archived === true)).toBe(true);
 
     await page.goto("/");
-    await expect(page.getByText("All your balances are resolved.")).toBeVisible({ timeout: 8_000 });
-    await page.getByRole("button", { name: "Show 1 archived balance" }).click();
-    await page.getByRole("button", { name: "Restore", exact: true }).click();
-    await expect(page.getByText("Balance restored to dashboard")).toBeVisible({ timeout: 8_000 });
-    await expect.poll(async () => (await pairData(pairId)).hidden).toBe(false);
+    await expect(page.getByText("Bob", { exact: true })).toBeVisible({ timeout: 8_000 });
     expectNoFirebaseFailures(failures);
+  });
+
+  test("removes a settled connection for both users while retaining read-only history", async ({ page, browser }) => {
+    const { pairId, userA } = await setupPair();
+    await createTransaction({
+      id: "removed-history",
+      pairId,
+      amount: 20,
+      type: "payment",
+      description: "Retained history",
+      createdBy: userA.uid,
+      status: "approved",
+    });
+    const failures = trackFirebaseFailures(page);
+
+    await loginViaUI(page, alice);
+    await page.goto(`/pair/${pairId}`);
+    await page.getByRole("button", { name: "More options" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Remove connection…" }).click();
+    await expect(page.getByRole("status")).toHaveText("Connection removed", { timeout: 8_000 });
+    await expect.poll(async () => (await pairData(pairId)).status).toBe("removed");
+
+    await page.goto(`/pair/${pairId}`);
+    await expect(page.getByRole("main").getByText("Connection removed", { exact: true })).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("Retained history")).toBeVisible();
+    await expect(page.getByRole("button", { name: "+ Transaction" })).not.toBeVisible();
+
+    const partnerContext = await browser.newContext();
+    const partnerPage = await partnerContext.newPage();
+    const partnerFailures = trackFirebaseFailures(partnerPage);
+    try {
+      await loginViaUI(partnerPage, bob);
+      await partnerPage.goto("/");
+      await expect(partnerPage.getByText("No transactions yet")).toBeVisible({ timeout: 8_000 });
+    } finally {
+      await partnerContext.close();
+    }
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "+ Transaction" }).first().click();
+    await page.getByRole("button", { name: "+ Connect with someone new" }).click();
+    await page.getByPlaceholder("Their email address").fill(bob.email);
+    await page.getByPlaceholder("0.00").fill("15");
+    await page.getByRole("button", { name: "Send Invite & Record Transaction" }).click();
+    await expect(page.getByText("Invite saved!")).toBeVisible({ timeout: 8_000 });
+    expectNoFirebaseFailures(failures, partnerFailures);
   });
 
   test("keeps a shared pair usable after one account is deleted and labels it clearly", async ({ page, browser }) => {
@@ -354,10 +529,7 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
 
       await page.goto(`/pair/${pairId}`);
       await expect(page.getByText("[Deleted Account]", { exact: true })).toBeVisible({ timeout: 8_000 });
-      await page.getByRole("button", { name: "Settle Balance" }).click();
-      await page.getByRole("button", { name: "Confirm Settle" }).click();
-      await expect(page.getByText("Balance settled!")).toBeVisible({ timeout: 8_000 });
-      await expect.poll(async () => (await pairData(pairId)).balance).toBe(0);
+      await expect(page.getByRole("button", { name: "Settle Balance" })).toBeVisible();
       expectNoFirebaseFailures(ownerFailures, partnerFailures);
     } finally {
       await partnerContext.close();

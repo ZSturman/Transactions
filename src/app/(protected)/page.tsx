@@ -14,7 +14,7 @@ import PendingTransactionBanner from "@/components/PendingTransactionBanner";
 import NetBalanceTrendChart from "@/components/NetBalanceTrendChart";
 import TransactionActivityChart from "@/components/TransactionActivityChart";
 import DashboardFilterBar, { DashboardFilters } from "@/components/DashboardFilterBar";
-import { unhidePair, cancelTransaction } from "@/utils/transactionActions";
+import { cancelTransaction } from "@/utils/transactionActions";
 import toast from "react-hot-toast";
 import { Pair } from "@/types";
 
@@ -42,34 +42,17 @@ export default function DashboardPage() {
     [pairs]
   );
 
-  // Pairs hidden after bulk-archive — excluded from charts/balances by default
-  const hiddenPairs = useMemo(
-    () => activePairs.filter((p) => p.hidden === true),
-    [activePairs]
-  );
-  const visiblePairs = useMemo(
-    () => activePairs.filter((p) => !p.hidden),
-    [activePairs]
-  );
-
   const [showModal, setShowModal] = useState(false);
   const [sendRequestPair, setSendRequestPair] = useState<Pair | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [period, setPeriod] = useState<Period>("30D");
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
-  const [showArchived, setShowArchived] = useState(false);
-
-  // Always subscribe to ALL active pairs so the Show Archived toggle can
-  // include hidden pairs' data in charts without remounting listeners.
-  // Also include pending pairs so we can count queued transaction requests.
-  const { transactions: rawTransactions } = useAllTransactions(pairs, { includeArchived: showArchived, includePending: true });
+  // Include pending invitation pairs for queued-request counts. Active pairs
+  // are always displayed, even when legacy records still carry hidden flags.
+  const { transactions: rawTransactions } = useAllTransactions(pairs, { includePending: true });
   const { snapshots: rawSnapshots } = useAllBalanceSnapshots(activePairs);
 
-  // displayPairs = the pairs whose data feeds the charts & balance numbers
-  const displayPairs = useMemo(
-    () => (showArchived ? activePairs : visiblePairs),
-    [showArchived, activePairs, visiblePairs]
-  );
+  const displayPairs = activePairs;
   const displayPairIds = useMemo(
     () => new Set(displayPairs.map((p) => p.id)),
     [displayPairs]
@@ -85,8 +68,10 @@ export default function DashboardPage() {
 
   // ── Pending transactions that need the current user's action ──
   const pendingActionTxs = useMemo(
-    () => transactions.filter((tx) => tx.status === "pending" && tx.createdBy !== user?.uid),
-    [transactions, user]
+    () => rawTransactions.filter(
+      (tx) => tx.status === "pending" && tx.createdBy !== user?.uid && displayPairIds.has(tx.pairId)
+    ),
+    [rawTransactions, user, displayPairIds]
   );
 
   const { owedToMe, iOwe } = displayPairs.reduce(
@@ -211,15 +196,6 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleRestorePair(pairId: string) {
-    try {
-      await unhidePair(pairId);
-      toast.success("Balance restored to dashboard");
-    } catch (err: any) {
-      toast.error(err.message || "Failed to restore");
-    }
-  }
-
   if (pairsLoading || invitesLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -293,18 +269,6 @@ export default function DashboardPage() {
 
       {activePairs.length > 0 && (
         <>
-          {/* ── "All resolved" state: all pairs are archived ── */}
-          {!showArchived && visiblePairs.length === 0 && hiddenPairs.length > 0 && (
-            <div className="text-center py-10 space-y-3">
-              <p className="text-gray-500 font-medium">All your balances are resolved.</p>
-              <button
-                onClick={() => setShowArchived(true)}
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Show {hiddenPairs.length} archived balance{hiddenPairs.length === 1 ? "" : "s"}
-              </button>
-            </div>
-          )}
           {/* ── Hero Chart ── */}
           {displayPairs.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-1">
@@ -383,20 +347,9 @@ export default function DashboardPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-                {showArchived ? "All Balances" : "Active Balances"}
+                Active Balances
               </h2>
-              <div className="flex items-center gap-2">
-                {hiddenPairs.length > 0 && (
-                  <button
-                    onClick={() => setShowArchived((v) => !v)}
-                    className="text-xs text-gray-500 hover:text-gray-800 underline underline-offset-2"
-                  >
-                    {showArchived
-                      ? "Hide archived"
-                      : `Show archived (${hiddenPairs.length})`}
-                  </button>
-                )}
-                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setViewMode("cards")}
                   className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
@@ -418,7 +371,6 @@ export default function DashboardPage() {
                   Table
                 </button>
               </div>
-              </div>
             </div>
 
             <DashboardFilterBar
@@ -433,24 +385,7 @@ export default function DashboardPage() {
               filteredPairs.length > 0 ? (
                 <div className="space-y-2">
                   {filteredPairs.map((pair) => (
-                    <div key={pair.id} className="relative">
-                      <PairCard pair={pair} />
-                      {pair.hidden && (
-                        <div className="absolute top-2 right-12 flex items-center gap-1.5 pointer-events-none">
-                          <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium">
-                            archived
-                          </span>
-                        </div>
-                      )}
-                      {pair.hidden && (
-                        <button
-                          onClick={() => handleRestorePair(pair.id)}
-                          className="absolute top-2 right-2 text-[10px] text-blue-600 hover:underline font-medium z-10"
-                        >
-                          Restore
-                        </button>
-                      )}
-                    </div>
+                    <PairCard key={pair.id} pair={pair} />
                   ))}
                 </div>
               ) : (
@@ -473,8 +408,6 @@ export default function DashboardPage() {
             )}
           </div>
           )}
-
-          {/* ── Archived Pairs (shown inline above when showArchived=true) ── */}
         </>
       )}
 

@@ -33,12 +33,10 @@ export interface Pair {
   userNames: [string, string];
   balance: number;                    // positive → users[0] is owed; negative → users[1] is owed
   currency: string;
-  status: "active" | "archived" | "pending";
+  status: "active" | "pending" | "removed";
   createdAt: Timestamp;
   updatedAt: Timestamp;
   deletedUsers?: Record<string, { deletedAt: Timestamp }>;
-  hidden?: boolean;                   // hides this pair from dashboard (set after bulk archive)
-  hiddenAt?: Timestamp;
 }
 
 // ─── Transactions ───────────────────────────────────────
@@ -60,6 +58,8 @@ export interface Transaction {
   resolvedAt?: Timestamp;
   archived?: boolean;                 // soft-archive: hidden from default views
   archivedAt?: Timestamp;
+  /** Canonical pair balance captured when a settlement was requested. */
+  balanceAtRequest?: number;
   /** Stable key used to skip duplicate rows in CSV imports. */
   importFingerprint?: string;
   importBatchId?: string;

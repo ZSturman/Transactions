@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   doc,
@@ -25,8 +25,10 @@ import {
   archiveTransaction,
   unarchiveTransaction,
   archiveResolvedForPair,
-  hidePair,
   cancelTransaction,
+  requestSettlement,
+  denySettlement,
+  removeConnection,
 } from "@/utils/transactionActions";
 import BalanceSummary from "@/components/BalanceSummary";
 import TransactionForm from "@/components/TransactionForm";
@@ -43,6 +45,7 @@ type ViewMode = "cards" | "table";
 
 export default function PairDetailPage() {
   const params = useParams<{ pairId: string }>();
+  const router = useRouter();
   const pairId = params.pairId;
   const { user } = useAuth();
   const { pairs, loading: pairsLoading } = usePairs();
@@ -82,14 +85,24 @@ export default function PairDetailPage() {
   const partnerEmail = pair.userEmails[idx === 0 ? 1 : 0];
   const userBalance = idx === 0 ? pair.balance : -pair.balance;
   const isDeleted = pair.deletedUsers && Object.keys(pair.deletedUsers).some((uid) => uid !== user.uid);
+  const isActive = pair.status === "active";
 
   const pendingCount = transactions.filter((t) => t.status === "pending" && t.createdBy !== user.uid).length;
+  const hasPendingTransactions = transactions.some((t) => t.status === "pending");
+  const hasPendingSettlement = transactions.some(
+    (t) => t.type === "settlement" && t.status === "pending"
+  );
+  const canRemoveConnection = isActive && pair.balance === 0 && !hasPendingTransactions;
   const filteredTransactions = filter === "all" ? transactions : transactions.filter((t) => t.status === filter);
 
   async function handleApprove(tx: Transaction) {
     try {
       await approveTransaction(pair!, tx, user!.uid);
-      toast.success("Transaction approved — balance updated!");
+      toast.success(
+        tx.type === "settlement"
+          ? "Settlement approved — balance updated!"
+          : "Transaction approved — balance updated!"
+      );
     } catch (err: any) {
       toast.error(err.message || "Failed to approve");
     }
@@ -101,6 +114,15 @@ export default function PairDetailPage() {
       toast.success("Transaction disputed — creator notified");
     } catch (err: any) {
       toast.error(err.message || "Failed to dispute");
+    }
+  }
+
+  async function handleDenySettlement(tx: Transaction) {
+    try {
+      await denySettlement(pair!, tx, user!.uid);
+      toast.success("Settlement request denied");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to deny settlement request");
     }
   }
 
@@ -124,37 +146,11 @@ export default function PairDetailPage() {
 
   async function handleSettle() {
     try {
-      const absBalance = Math.abs(pair!.balance);
-      await runTransaction(db, async (transaction) => {
-        const pairRef = doc(db, "pairs", pair!.id);
-        const pairSnap = await transaction.get(pairRef);
-        if (!pairSnap.exists()) throw new Error("Pair not found");
-
-        const txRef = doc(collection(db, "pairs", pair!.id, "transactions"));
-        transaction.set(txRef, {
-          pairId: pair!.id,
-          amount: absBalance,
-          type: "settlement",
-          description: "Settled balance",
-          createdBy: user!.uid,
-          status: "approved",
-          createdAt: serverTimestamp(),
-          resolvedAt: serverTimestamp(),
-        });
-
-        transaction.update(pairRef, { balance: 0, updatedAt: serverTimestamp() });
-      });
-
-      await addDoc(collection(db, "pairs", pair!.id, "balanceSnapshots"), {
-        balance: 0,
-        timestamp: serverTimestamp(),
-        triggeredBy: user!.uid,
-        reason: "settled",
-      });
+      await requestSettlement(pair!, user!.uid);
       setShowSettleModal(false);
-      toast.success("Balance settled!");
+      toast.success("Settlement request sent — waiting for approval");
     } catch (err: any) {
-      toast.error(err.message || "Failed to settle");
+      toast.error(err.message || "Failed to request settlement");
     }
   }
 
@@ -241,12 +237,14 @@ export default function PairDetailPage() {
     }
   }
 
-  async function handleHidePair() {
+  async function handleRemoveConnection() {
+    if (!confirm("Remove this connection for both people? Its transaction history will remain read-only.")) return;
     try {
-      await hidePair(pair!.id);
-      toast.success("Account hidden from dashboard");
+      await removeConnection(pair!);
+      toast.success("Connection removed");
+      router.push("/");
     } catch (err: any) {
-      toast.error(err.message || "Failed to hide");
+      toast.error(err.message || "Failed to remove connection");
     }
   }
 
@@ -270,11 +268,17 @@ export default function PairDetailPage() {
               {pendingCount} pending
             </span>
           )}
+          {!isActive && (
+            <span className="bg-gray-100 text-gray-600 text-xs font-semibold px-2.5 py-1 rounded-full">
+              Connection removed
+            </span>
+          )}
           <PairOptionsMenu
             pair={pair}
             onExport={handleExport}
             onExportJson={handleExportJson}
-            onForgive={() => setShowForgiveModal(true)}
+            onForgive={isActive ? () => setShowForgiveModal(true) : undefined}
+            onRemove={canRemoveConnection ? handleRemoveConnection : undefined}
           />
         </div>
       </div>
@@ -290,7 +294,7 @@ export default function PairDetailPage() {
       </div>
 
       {/* Settle button */}
-      {pair.balance !== 0 && (
+      {isActive && pair.balance !== 0 && !hasPendingSettlement && (
         <button
           onClick={() => setShowSettleModal(true)}
           className="btn-secondary w-full text-sm"
@@ -300,7 +304,7 @@ export default function PairDetailPage() {
       )}
 
       {/* Archive resolved transactions when settled (balance is zero) */}
-      {pair.balance === 0 &&
+      {isActive && pair.balance === 0 &&
         transactions.some((t) => t.status === "approved") && (
           <button
             onClick={handleArchiveAllResolved}
@@ -310,20 +314,12 @@ export default function PairDetailPage() {
           </button>
         )}
 
-      {/* Hide from dashboard when balance is zero and all transactions are already archived */}
-      {pair.balance === 0 &&
-        !pair.hidden &&
-        !transactions.some((t) => t.status === "approved") && (
-          <button
-            onClick={handleHidePair}
-            className="btn-secondary w-full text-sm"
-          >
-            Mark as resolved &amp; hide from dashboard
-          </button>
-        )}
-
       {/* Add transaction */}
-      {showForm ? (
+      {!isActive ? (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+          This connection has been removed. Its transaction history is read-only.
+        </div>
+      ) : showForm ? (
         <TransactionForm pair={pair} onClose={() => setShowForm(false)} />
       ) : (
         <div className="flex gap-2">
@@ -393,22 +389,23 @@ export default function PairDetailPage() {
         <TransactionList
           transactions={filteredTransactions}
           pair={pair}
-          onApprove={handleApprove}
-          onDispute={handleDispute}
-          onAcceptCounter={handleAcceptCounter}
-          onRejectCounter={handleRejectCounter}
-          onArchive={handleArchive}
-          onUnarchive={handleUnarchive}
-          onCancel={handleCancelTransaction}
+          onApprove={isActive ? handleApprove : undefined}
+          onDispute={isActive ? handleDispute : undefined}
+          onDenySettlement={isActive ? handleDenySettlement : undefined}
+          onAcceptCounter={isActive ? handleAcceptCounter : undefined}
+          onRejectCounter={isActive ? handleRejectCounter : undefined}
+          onArchive={isActive ? handleArchive : undefined}
+          onUnarchive={isActive ? handleUnarchive : undefined}
+          onCancel={isActive ? handleCancelTransaction : undefined}
         />
       ) : (
         <TransactionTable
           transactions={filteredTransactions.map((t) => ({ ...t, pairId: pair.id }))}
           pairs={[pair]}
-          onApprove={handleApprove}
-          onDispute={handleDispute}
-          onArchive={handleArchive}
-          onUnarchive={handleUnarchive}
+          onApprove={isActive ? handleApprove : undefined}
+          onDenySettlement={isActive ? handleDenySettlement : undefined}
+          onArchive={isActive ? handleArchive : undefined}
+          onUnarchive={isActive ? handleUnarchive : undefined}
         />
       )}
 

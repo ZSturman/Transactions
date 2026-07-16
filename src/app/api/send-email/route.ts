@@ -196,16 +196,17 @@ async function buildTransactionDelivery(
   const description = transaction.description ? ` for “${String(transaction.description)}”` : "";
   const fromName = String(actorProfile.displayName || userNames[actorIndex] || userEmails[actorIndex] || "Your partner");
   const toName = String(recipientProfile.displayName || userNames[recipientIndex] || userEmails[recipientIndex] || "there");
+  const isSettlement = transaction.type === "settlement";
   const isApproved = transaction.status === "approved";
-  const action = body.type === "transaction"
-    ? transaction.type === "request"
-      ? "requested"
-      : "recorded a payment of"
-    : isApproved
-    ? "approved"
-    : "disputed";
+  const action = transaction.type === "request" ? "requested" : "recorded a payment of";
   const message = body.type === "transaction"
-    ? `${fromName} ${action} ${amount}${description}. Review the transaction in Transactions.`
+    ? isSettlement
+      ? `${fromName} requested to settle the shared balance of ${amount}. Review and approve or deny the request in Transactions.`
+      : `${fromName} ${action} ${amount}${description}. Review the transaction in Transactions.`
+    : isSettlement
+    ? isApproved
+      ? `${fromName} approved your settlement request of ${amount}. The shared balance is now settled.`
+      : `${fromName} denied your settlement request of ${amount}. The shared balance has not changed.`
     : isApproved
     ? `${fromName} approved your transaction of ${amount}${description}. The shared balance has been updated.`
     : `${fromName} disputed your transaction of ${amount}${description}${transaction.disputeReason ? `: “${String(transaction.disputeReason)}”` : "."}`;
@@ -217,7 +218,11 @@ async function buildTransactionDelivery(
     fromName,
     subject:
       body.type === "transaction"
-        ? `${fromName} ${action} ${amount}`
+        ? isSettlement
+          ? `${fromName} requested a settlement of ${amount}`
+          : `${fromName} ${action} ${amount}`
+        : isSettlement
+        ? `Settlement ${isApproved ? "approved" : "denied"}: ${amount}`
         : `Transaction ${isApproved ? "approved" : "disputed"}: ${amount}`,
     message,
     actionUrl: `${appUrl(request)}/pair/${encodeURIComponent(body.pairId)}`,

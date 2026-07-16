@@ -54,10 +54,24 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
 
   const height = mini ? 48 : 180;
 
+  const latestValue = data[data.length - 1].value;
+  const isSettled = latestValue === 0;
   const positive = data.every((d) => d.value >= 0);
   const negative = data.every((d) => d.value <= 0);
-  const strokeColor = negative ? "#ef4444" : positive ? "#16a34a" : "#3b82f6";
-  const fillColor = negative ? "#fee2e2" : positive ? "#dcfce7" : "#dbeafe";
+  const strokeColor = isSettled
+    ? "#9ca3af"
+    : negative
+    ? "#ef4444"
+    : positive
+    ? "#16a34a"
+    : "#3b82f6";
+  const fillColor = isSettled
+    ? "#f3f4f6"
+    : negative
+    ? "#fee2e2"
+    : positive
+    ? "#dcfce7"
+    : "#dbeafe";
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -84,7 +98,7 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
             formatter={(value) => {
               const num = typeof value === "number" ? value : 0;
               return [
-                `${symbol}${Math.abs(num).toFixed(2)} ${num >= 0 ? "(owed to you)" : "(you owe)"}`,
+                `${symbol}${Math.abs(num).toFixed(2)} ${num === 0 ? "(settled)" : num > 0 ? "(owed to you)" : "(you owe)"}`,
                 "Balance",
               ];
             }}

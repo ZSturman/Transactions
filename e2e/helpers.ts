@@ -73,6 +73,7 @@ type FsValue =
 function str(v: string): FsValue { return { stringValue: v }; }
 function int(v: number): FsValue { return { integerValue: String(v) }; }
 function dbl(v: number): FsValue { return { doubleValue: v }; }
+function bool(v: boolean): FsValue { return { booleanValue: v }; }
 function ts(v?: Date): FsValue { return { timestampValue: (v ?? new Date()).toISOString() }; }
 function arr(...items: FsValue[]): FsValue { return { arrayValue: { values: items } }; }
 function mapVal(fields: Record<string, FsValue>): FsValue { return { mapValue: { fields } }; }
@@ -194,7 +195,7 @@ export async function createUserProfile(opts: {
   });
 }
 
-/** Create an active or pending pair document. */
+/** Create a pair document. */
 export async function createPair(opts: {
   id: string;
   user1Id: string;
@@ -205,9 +206,10 @@ export async function createPair(opts: {
   user2Name?: string;
   balance?: number;
   currency?: string;
-  status?: "active" | "pending";
+  status?: "active" | "pending" | "removed";
+  hidden?: boolean;
 }): Promise<void> {
-  await patchDoc(`pairs/${opts.id}`, {
+  const fields: Record<string, FsValue> = {
     users: arr(str(opts.user1Id), str(opts.user2Id ?? "")),
     userEmails: arr(str(opts.user1Email), str(opts.user2Email)),
     userNames: arr(str(opts.user1Name), str(opts.user2Name ?? "")),
@@ -216,7 +218,9 @@ export async function createPair(opts: {
     status: str(opts.status ?? "active"),
     createdAt: ts(),
     updatedAt: ts(),
-  });
+  };
+  if (opts.hidden !== undefined) fields.hidden = bool(opts.hidden);
+  await patchDoc(`pairs/${opts.id}`, fields);
 }
 
 /** Create an invite document. */
@@ -262,12 +266,13 @@ export async function createTransaction(opts: {
   id: string;
   pairId: string;
   amount: number;
-  type: "payment" | "request";
+  type: "payment" | "request" | "settlement";
   description?: string;
   createdBy: string;
   status?: "pending" | "approved" | "disputed";
+  balanceAtRequest?: number;
 }): Promise<void> {
-  await patchDoc(`pairs/${opts.pairId}/transactions/${opts.id}`, {
+  const fields: Record<string, FsValue> = {
     pairId: str(opts.pairId),
     amount: int(opts.amount),
     type: str(opts.type),
@@ -275,6 +280,24 @@ export async function createTransaction(opts: {
     createdBy: str(opts.createdBy),
     status: str(opts.status ?? "pending"),
     createdAt: ts(),
+  };
+  if (opts.balanceAtRequest !== undefined) fields.balanceAtRequest = int(opts.balanceAtRequest);
+  await patchDoc(`pairs/${opts.pairId}/transactions/${opts.id}`, fields);
+}
+
+/** Create a balance-history point for chart-focused tests. */
+export async function createBalanceSnapshot(opts: {
+  id: string;
+  pairId: string;
+  balance: number;
+  triggeredBy: string;
+  reason?: string;
+}): Promise<void> {
+  await patchDoc(`pairs/${opts.pairId}/balanceSnapshots/${opts.id}`, {
+    balance: int(opts.balance),
+    timestamp: ts(),
+    triggeredBy: str(opts.triggeredBy),
+    reason: str(opts.reason ?? "test"),
   });
 }
 

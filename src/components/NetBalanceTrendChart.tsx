@@ -129,10 +129,17 @@ export default function NetBalanceTrendChart({
     );
   }
 
+  const latestValue = chartData[chartData.length - 1].value;
+  const isSettled = latestValue === 0;
   const allPositive = chartData.every((d) => d.value >= 0);
   const allNegative = chartData.every((d) => d.value <= 0);
-  const strokeColor = allNegative ? "#ef4444" : allPositive ? "#16a34a" : "#3b82f6";
-  const fillColor = allNegative ? "#fee2e2" : allPositive ? "#dcfce7" : "#dbeafe";
+  const strokeColor = isSettled
+    ? "#9ca3af"
+    : allNegative
+    ? "#ef4444"
+    : allPositive
+    ? "#16a34a"
+    : "#3b82f6";
   const hasZeroCrossing = !allPositive && !allNegative;
 
   return (
@@ -168,7 +175,7 @@ export default function NetBalanceTrendChart({
               const num = typeof value === "number" ? value : 0;
               return [
                 `${symbol}${Math.abs(num).toFixed(2)} ${
-                  num >= 0 ? "(owed to you)" : "(you owe)"
+                  num === 0 ? "(settled)" : num > 0 ? "(owed to you)" : "(you owe)"
                 }`,
                 "Net Balance",
               ];

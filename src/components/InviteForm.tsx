@@ -25,7 +25,9 @@ export default function InviteForm({ onClose }: { onClose: () => void }) {
       toast.error("You can't invite yourself");
       return;
     }
-    if (pairs.some((pair) => pair.userEmails.some((address) => address.toLowerCase() === toEmail))) {
+    if (pairs.some(
+      (pair) => pair.status !== "removed" && pair.userEmails.some((address) => address.toLowerCase() === toEmail)
+    )) {
       toast.error("You already have a balance or pending invitation for this person");
       return;
     }

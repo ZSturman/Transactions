@@ -8,10 +8,11 @@ interface PairOptionsMenuProps {
   pair: Pair;
   onExport: () => void;
   onExportJson: () => void;
-  onForgive: () => void;
+  onForgive?: () => void;
+  onRemove?: () => void;
 }
 
-export default function PairOptionsMenu({ pair, onExport, onExportJson, onForgive }: PairOptionsMenuProps) {
+export default function PairOptionsMenu({ pair, onExport, onExportJson, onForgive, onRemove }: PairOptionsMenuProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -73,7 +74,7 @@ export default function PairOptionsMenu({ pair, onExport, onExportJson, onForgiv
           >
             Export complete data (JSON)
           </button>
-          {canForgive && (
+          {canForgive && onForgive && (
             <button
               onClick={() => {
                 onForgive();
@@ -82,6 +83,17 @@ export default function PairOptionsMenu({ pair, onExport, onExportJson, onForgiv
               className="w-full text-left px-4 py-2 text-sm text-purple-600 hover:bg-purple-50 transition-colors"
             >
               Forgive debt…
+            </button>
+          )}
+          {onRemove && (
+            <button
+              onClick={() => {
+                onRemove();
+                setOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+            >
+              Remove connection…
             </button>
           )}
         </div>

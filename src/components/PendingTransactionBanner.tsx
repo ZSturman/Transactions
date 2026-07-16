@@ -8,6 +8,7 @@ import { formatAmount } from "@/utils/currency";
 import {
   approveTransaction,
   disputeTransaction,
+  denySettlement,
   acceptCounter,
   rejectCounter,
 } from "@/utils/transactionActions";
@@ -40,9 +41,27 @@ export default function PendingTransactionBanner({
     setLoadingId(tx.id);
     try {
       await approveTransaction(pair, tx, user!.uid);
-      toast.success("Transaction approved — balance updated!");
+      toast.success(
+        tx.type === "settlement"
+          ? "Settlement approved — balance updated!"
+          : "Transaction approved — balance updated!"
+      );
     } catch (err: any) {
       toast.error(err.message || "Failed to approve");
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  async function handleDenySettlement(tx: PairTransaction) {
+    const pair = pairById[tx.pairId];
+    if (!pair) return;
+    setLoadingId(tx.id);
+    try {
+      await denySettlement(pair, tx, user!.uid);
+      toast.success("Settlement request denied");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to deny settlement request");
     } finally {
       setLoadingId(null);
     }
@@ -139,6 +158,11 @@ export default function PendingTransactionBanner({
                       {" "}<span className="font-bold">{formatAmount(tx.amount, pair.currency)}</span>
                       <span className="text-blue-600"> from you</span>
                     </p>
+                  ) : tx.type === "settlement" ? (
+                    <p className="text-sm font-semibold text-gray-800">
+                      <span className="text-teal-700">{partnerName} requested to settle</span>
+                      {" "}<span className="font-bold">{formatAmount(tx.amount, pair.currency)}</span>
+                    </p>
                   ) : (
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-sm text-gray-800">{partnerName}</p>
@@ -162,7 +186,25 @@ export default function PendingTransactionBanner({
                       {formatAmount(tx.amount, pair.currency)}
                     </span>
                   )}
-                  {!isCounterDisputed && tx.status === "pending" && (
+                  {tx.type === "settlement" && tx.status === "pending" && (
+                    <>
+                      <button
+                        onClick={() => handleApprove(tx)}
+                        disabled={isLoading}
+                        className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50"
+                      >
+                        {isLoading ? "…" : "Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleDenySettlement(tx)}
+                        disabled={isLoading}
+                        className="btn-danger text-xs px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Deny
+                      </button>
+                    </>
+                  )}
+                  {tx.type !== "settlement" && !isCounterDisputed && tx.status === "pending" && (
                     <>
                       <button
                         onClick={() => handleApprove(tx)}

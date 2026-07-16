@@ -12,6 +12,7 @@ interface TransactionTableProps {
   transactions: (Transaction & { pairId?: string })[];
   pairs: Pair[];
   onApprove?: (tx: Transaction) => void;
+  onDenySettlement?: (tx: Transaction) => void;
   onDispute?: (tx: Transaction, reason: string, proposedAmount?: number) => void;
   onArchive?: (tx: Transaction & { pairId?: string }) => void;
   onUnarchive?: (tx: Transaction & { pairId?: string }) => void;
@@ -37,6 +38,7 @@ export default function TransactionTable({
   transactions,
   pairs,
   onApprove,
+  onDenySettlement,
   onDispute,
   onArchive,
   onUnarchive,
@@ -204,6 +206,14 @@ export default function TransactionTable({
                   : "—";
               const isCreator = tx.createdBy === user?.uid;
               const isPending = tx.status === "pending" && !isCreator;
+              const isSettlementRequest = isPending && tx.type === "settlement";
+              const statusLabel = tx.type === "settlement"
+                ? tx.status === "approved"
+                  ? "settled"
+                  : tx.status === "disputed"
+                  ? "denied"
+                  : "pending"
+                : tx.status;
 
               const displayDate = tx.date?.toDate?.() ?? tx.createdAt?.toDate?.();
               const dateStr = displayDate
@@ -262,7 +272,7 @@ export default function TransactionTable({
                         STATUS_COLORS[tx.status] ?? "bg-gray-100 text-gray-600"
                       }`}
                     >
-                      {tx.status}
+                      {statusLabel}
                     </span>
                     {isPending && onApprove && (
                       <button
@@ -270,6 +280,14 @@ export default function TransactionTable({
                         className="ml-2 text-xs text-blue-600 hover:underline"
                       >
                         Approve
+                      </button>
+                    )}
+                    {isSettlementRequest && onDenySettlement && (
+                      <button
+                        onClick={() => onDenySettlement(tx)}
+                        className="ml-2 text-xs text-red-600 hover:underline"
+                      >
+                        Deny
                       </button>
                     )}
                     {tx.archived && (

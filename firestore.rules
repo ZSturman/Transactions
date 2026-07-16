@@ -9,8 +9,23 @@ service cloud.firestore {
       return signedIn() && request.auth.uid in pair.users;
     }
 
-    function isMemberAfter(pairId) {
+    function isActiveMember(pair) {
+      return isMember(pair) && pair.status == 'active';
+    }
+
+    function isWritableMember(pair) {
+      return isMember(pair) && pair.status in ['active', 'pending'];
+    }
+
+    function isActiveMemberAfter(pairId) {
       return signedIn()
+        && getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.status == 'active'
+        && request.auth.uid in getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.users;
+    }
+
+    function isWritableMemberAfter(pairId) {
+      return signedIn()
+        && getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.status in ['active', 'pending']
         && request.auth.uid in getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.users;
     }
 
@@ -35,7 +50,7 @@ service cloud.firestore {
     }
 
     function memberUpdatesActivePair() {
-      return isMember(resource.data)
+      return isActiveMember(resource.data)
         && resource.data.status == 'active'
         && request.resource.data.status == 'active'
         && request.resource.data.users == resource.data.users
@@ -43,7 +58,77 @@ service cloud.firestore {
         && request.resource.data.userNames == resource.data.userNames
         && request.resource.data.currency == resource.data.currency
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['balance', 'updatedAt', 'hidden', 'hiddenAt', 'deletedUsers']);
+          .hasOnly(['balance', 'updatedAt', 'deletedUsers']);
+    }
+
+    function memberRemovesSettledPair() {
+      return isActiveMember(resource.data)
+        && resource.data.balance == 0
+        && request.resource.data.status == 'removed'
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.userEmails == resource.data.userEmails
+        && request.resource.data.userNames == resource.data.userNames
+        && request.resource.data.currency == resource.data.currency
+        && request.resource.data.balance == resource.data.balance
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'updatedAt']);
+    }
+
+    function memberMarksRemovedPairDeletion() {
+      return isMember(resource.data)
+        && resource.data.status == 'removed'
+        && request.resource.data.status == 'removed'
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.userEmails == resource.data.userEmails
+        && request.resource.data.userNames == resource.data.userNames
+        && request.resource.data.currency == resource.data.currency
+        && request.resource.data.balance == resource.data.balance
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['deletedUsers']);
+    }
+
+    function preservesTransactionIdentity() {
+      return request.resource.data.pairId == resource.data.pairId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    function partnerResolvesPendingTransaction() {
+      return resource.data.status == 'pending'
+        && request.auth.uid != resource.data.createdBy
+        && request.resource.data.status in ['approved', 'disputed']
+        && (
+          resource.data.type != 'settlement'
+          || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'resolvedAt'])
+        );
+    }
+
+    function creatorResolvesCounterProposal() {
+      return resource.data.status == 'disputed'
+        && request.auth.uid == resource.data.createdBy
+        && (
+          (
+            resource.data.proposedAmount != null
+            && request.resource.data.status == 'approved'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['amount', 'status', 'resolvedAt'])
+          )
+          || (
+            request.resource.data.status == 'disputed'
+            && request.resource.data.proposedAmount == null
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['proposedAmount'])
+          )
+        );
+    }
+
+    function memberArchivesResolvedTransaction() {
+      return resource.data.status == 'approved'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['archived', 'archivedAt']);
     }
 
     // ─── Users ──────────────────────────────────────────
@@ -66,7 +151,10 @@ service cloud.firestore {
         && request.resource.data.users[1] == ''
         && request.resource.data.status == 'pending';
 
-      allow update: if recipientCompletesPendingPair() || memberUpdatesActivePair();
+      allow update: if recipientCompletesPendingPair()
+        || memberUpdatesActivePair()
+        || memberRemovesSettledPair()
+        || memberMarksRemovedPairDeletion();
 
       allow delete: if signedIn()
         && resource.data.status == 'pending'
@@ -77,7 +165,7 @@ service cloud.firestore {
 
         // getAfter permits the invitation acceptance transaction to activate a
         // pair and create its queued transaction atomically.
-        allow create: if isMemberAfter(pairId)
+        allow create: if isWritableMemberAfter(pairId)
           && request.resource.data.createdBy
             in getAfter(/databases/$(database)/documents/pairs/$(pairId)).data.users
           && request.resource.data.pairId == pairId
@@ -86,24 +174,27 @@ service cloud.firestore {
             || (
               request.resource.data.status == 'approved'
               && request.resource.data.createdBy == request.auth.uid
-              && request.resource.data.type in ['settlement', 'forgiveness']
+              && request.resource.data.type == 'forgiveness'
+              && isActiveMemberAfter(pairId)
             )
           );
 
-        allow update: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
-          && request.resource.data.pairId == resource.data.pairId
-          && request.resource.data.createdBy == resource.data.createdBy
-          && request.resource.data.type == resource.data.type
-          && request.resource.data.createdAt == resource.data.createdAt;
+        allow update: if isActiveMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
+          && preservesTransactionIdentity()
+          && (
+            partnerResolvesPendingTransaction()
+            || creatorResolvesCounterProposal()
+            || memberArchivesResolvedTransaction()
+          );
 
-        allow delete: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
+        allow delete: if isWritableMember(get(/databases/$(database)/documents/pairs/$(pairId)).data)
           && resource.data.createdBy == request.auth.uid
           && resource.data.status == 'pending';
       }
 
       match /balanceSnapshots/{snapId} {
         allow read: if isMember(get(/databases/$(database)/documents/pairs/$(pairId)).data);
-        allow create: if isMember(getAfter(/databases/$(database)/documents/pairs/$(pairId)).data);
+        allow create: if isActiveMember(getAfter(/databases/$(database)/documents/pairs/$(pairId)).data);
       }
     }
 

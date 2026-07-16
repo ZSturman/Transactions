@@ -54,7 +54,9 @@ export default function TransactionModal({ pairs, onClose, initialPair }: Transa
       toast.error("You can't invite yourself");
       return;
     }
-    if (pairs.some((p) => p.userEmails.some((em) => em.toLowerCase() === normalizedEmail))) {
+    if (pairs.some(
+      (p) => p.status !== "removed" && p.userEmails.some((em) => em.toLowerCase() === normalizedEmail)
+    )) {
       toast.error("You already have a balance with this person");
       return;
     }

@@ -122,7 +122,6 @@ function serialisePair(pair: Pair) {
     ...pair,
     createdAt: asIso(pair.createdAt),
     updatedAt: asIso(pair.updatedAt),
-    hiddenAt: asIso(pair.hiddenAt),
   };
 }
 

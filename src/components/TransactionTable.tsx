@@ -27,6 +27,18 @@ const STATUS_COLORS: Record<string, string> = {
   disputed: "bg-red-100 text-red-700",
 };
 
+function timestampMillis(timestamp: Transaction["date"] | undefined): number | undefined {
+  const millis = timestamp?.toMillis?.();
+  if (typeof millis === "number") return millis;
+  const date = timestamp?.toDate?.();
+  return date instanceof Date ? date.getTime() : undefined;
+}
+
+/** Use the user-facing event date everywhere the table compares dates. */
+function eventDateMillis(transaction: Transaction): number {
+  return timestampMillis(transaction.date) ?? timestampMillis(transaction.createdAt) ?? 0;
+}
+
 export default function TransactionTable({
   transactions,
   pairs,
@@ -69,7 +81,7 @@ export default function TransactionTable({
     if (startDate) {
       const start = new Date(startDate).getTime();
       rows = rows.filter((tx) => {
-        const d = tx.createdAt?.toDate?.()?.getTime() ?? 0;
+        const d = eventDateMillis(tx);
         return d >= start;
       });
     }
@@ -77,7 +89,7 @@ export default function TransactionTable({
     if (endDate) {
       const end = new Date(endDate).getTime() + 86400000;
       rows = rows.filter((tx) => {
-        const d = tx.createdAt?.toDate?.()?.getTime() ?? 0;
+        const d = eventDateMillis(tx);
         return d <= end;
       });
     }
@@ -87,8 +99,8 @@ export default function TransactionTable({
       const dir = sortDir === "asc" ? 1 : -1;
       switch (sortKey) {
         case "date": {
-          const ta = a.createdAt?.toMillis?.() ?? 0;
-          const tb = b.createdAt?.toMillis?.() ?? 0;
+          const ta = eventDateMillis(a);
+          const tb = eventDateMillis(b);
           return (ta - tb) * dir;
         }
         case "amount":

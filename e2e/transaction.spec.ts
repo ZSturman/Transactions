@@ -159,6 +159,42 @@ test.describe("Transaction flow", () => {
     await expect(page.getByText("Enter a valid amount")).toBeVisible({ timeout: 8_000 });
   });
 
+  test("sorts the table by the event date shown to the user", async ({ page }) => {
+    const { userA, pairId } = await setupPair();
+    await Promise.all([
+      createTransaction({
+        id: "event-date-old",
+        pairId,
+        amount: 10,
+        type: "payment",
+        description: "Older event",
+        createdBy: userA.uid,
+        date: new Date("2026-01-15T12:00:00Z"),
+        createdAt: new Date("2026-07-15T12:00:00Z"),
+      }),
+      createTransaction({
+        id: "event-date-new",
+        pairId,
+        amount: 20,
+        type: "payment",
+        description: "Newer event",
+        createdBy: userA.uid,
+        date: new Date("2026-03-15T12:00:00Z"),
+        createdAt: new Date("2026-01-15T12:00:00Z"),
+      }),
+    ]);
+
+    await loginViaUI(page, { email: "alice@tx-test.com", password: "password123" });
+    await page.goto(`/pair/${pairId}`);
+    await page.getByRole("button", { name: "Table" }).click();
+
+    const descriptions = page.locator("tbody tr td:nth-child(3)");
+    await expect(descriptions).toHaveText(["Newer event", "Older event"]);
+
+    await page.getByRole("columnheader", { name: /Date/ }).click();
+    await expect(descriptions).toHaveText(["Older event", "Newer event"]);
+  });
+
   test("records a custom split using only the amount the partner owes", async ({ page, browser }) => {
     const { userA, pairId } = await setupPair();
     captureEmailCalls(page);

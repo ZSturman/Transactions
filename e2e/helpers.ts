@@ -271,6 +271,9 @@ export async function createTransaction(opts: {
   createdBy: string;
   status?: "pending" | "approved" | "disputed";
   balanceAtRequest?: number;
+  /** User-facing event date, which may differ from when the record was created. */
+  date?: Date;
+  createdAt?: Date;
 }): Promise<void> {
   const fields: Record<string, FsValue> = {
     pairId: str(opts.pairId),
@@ -279,9 +282,10 @@ export async function createTransaction(opts: {
     description: str(opts.description ?? ""),
     createdBy: str(opts.createdBy),
     status: str(opts.status ?? "pending"),
-    createdAt: ts(),
+    createdAt: ts(opts.createdAt),
   };
   if (opts.balanceAtRequest !== undefined) fields.balanceAtRequest = int(opts.balanceAtRequest);
+  if (opts.date) fields.date = ts(opts.date);
   await patchDoc(`pairs/${opts.pairId}/transactions/${opts.id}`, fields);
 }
 

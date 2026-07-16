@@ -255,14 +255,14 @@ export default function PairDetailPage() {
       </Link>
 
       {/* Partner header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="truncate text-lg font-bold">
             {isDeleted ? "[Deleted Account]" : partnerName}
           </h1>
-          <p className="text-xs text-gray-400">{partnerEmail}</p>
+          <p className="truncate text-xs text-gray-400">{partnerEmail}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-shrink-0 items-center gap-2">
           {pendingCount > 0 && (
             <span className="bg-blue-100 text-blue-700 text-xs font-semibold px-2.5 py-1 rounded-full">
               {pendingCount} pending

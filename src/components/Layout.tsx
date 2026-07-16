@@ -23,16 +23,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="text-lg font-bold text-blue-600">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
+          <Link href="/" className="text-base sm:text-lg font-bold text-blue-600 whitespace-nowrap">
             Transactions
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 whitespace-nowrap">
             {navItems.map((item) => (
               <Link
                 key={item.path}
                 href={item.path}
-                className={`text-sm font-medium transition-colors ${
+                className={`py-2 text-xs sm:text-sm font-medium transition-colors ${
                   pathname === item.path
                     ? "text-blue-600"
                     : "text-gray-500 hover:text-gray-900"
@@ -43,7 +43,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             ))}
             <button
               onClick={handleLogout}
-              className="text-sm text-gray-500 hover:text-red-600 transition-colors"
+              className="py-2 text-xs sm:text-sm text-gray-500 hover:text-red-600 transition-colors"
             >
               Sign out
             </button>

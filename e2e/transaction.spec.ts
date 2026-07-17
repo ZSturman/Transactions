@@ -159,7 +159,7 @@ test.describe("Transaction flow", () => {
     await expect(page.getByText("Enter a valid amount")).toBeVisible({ timeout: 8_000 });
   });
 
-  test("sorts the table by the event date shown to the user", async ({ page }) => {
+  test("sorts transaction lists and tables by the event date shown to the user", async ({ page }) => {
     const { userA, pairId } = await setupPair();
     await Promise.all([
       createTransaction({
@@ -186,6 +186,13 @@ test.describe("Transaction flow", () => {
 
     await loginViaUI(page, { email: "alice@tx-test.com", password: "password123" });
     await page.goto(`/pair/${pairId}`);
+
+    const listItems = page.locator('[data-testid^="transaction-item-"]');
+    await expect(listItems.nth(0)).toContainText("Newer event");
+    await expect(listItems.nth(0)).toContainText("Mar 15, 2026");
+    await expect(listItems.nth(1)).toContainText("Older event");
+    await expect(listItems.nth(1)).toContainText("Jan 15, 2026");
+
     await page.getByRole("button", { name: "Table" }).click();
 
     const descriptions = page.locator("tbody tr td:nth-child(3)");

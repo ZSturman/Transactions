@@ -5,6 +5,7 @@ import { Pair, Transaction } from "@/types";
 import { formatAmount } from "@/utils/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import { obligationText, transactionTypeLabel } from "@/utils/transactionPresentation";
+import { transactionEventDate, transactionEventDateMillis } from "@/utils/transactionDate";
 
 type SortKey = "date" | "person" | "amount" | "type" | "status";
 type SortDir = "asc" | "desc";
@@ -26,18 +27,6 @@ const STATUS_COLORS: Record<string, string> = {
   approved: "bg-green-100 text-green-700",
   disputed: "bg-red-100 text-red-700",
 };
-
-function timestampMillis(timestamp: Transaction["date"] | undefined): number | undefined {
-  const millis = timestamp?.toMillis?.();
-  if (typeof millis === "number") return millis;
-  const date = timestamp?.toDate?.();
-  return date instanceof Date ? date.getTime() : undefined;
-}
-
-/** Use the user-facing event date everywhere the table compares dates. */
-function eventDateMillis(transaction: Transaction): number {
-  return timestampMillis(transaction.date) ?? timestampMillis(transaction.createdAt) ?? 0;
-}
 
 export default function TransactionTable({
   transactions,
@@ -81,7 +70,7 @@ export default function TransactionTable({
     if (startDate) {
       const start = new Date(startDate).getTime();
       rows = rows.filter((tx) => {
-        const d = eventDateMillis(tx);
+        const d = transactionEventDateMillis(tx);
         return d >= start;
       });
     }
@@ -89,7 +78,7 @@ export default function TransactionTable({
     if (endDate) {
       const end = new Date(endDate).getTime() + 86400000;
       rows = rows.filter((tx) => {
-        const d = eventDateMillis(tx);
+        const d = transactionEventDateMillis(tx);
         return d <= end;
       });
     }
@@ -99,8 +88,8 @@ export default function TransactionTable({
       const dir = sortDir === "asc" ? 1 : -1;
       switch (sortKey) {
         case "date": {
-          const ta = eventDateMillis(a);
-          const tb = eventDateMillis(b);
+          const ta = transactionEventDateMillis(a);
+          const tb = transactionEventDateMillis(b);
           return (ta - tb) * dir;
         }
         case "amount":
@@ -230,7 +219,7 @@ export default function TransactionTable({
                   : "pending"
                 : tx.status;
 
-              const displayDate = tx.date?.toDate?.() ?? tx.createdAt?.toDate?.();
+              const displayDate = transactionEventDate(tx);
               const dateStr = displayDate
                 ? displayDate.toLocaleDateString("en-US", {
                     month: "short",

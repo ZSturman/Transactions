@@ -7,6 +7,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Transaction } from "@/types";
+import { sortTransactionsByEventDate } from "@/utils/transactionDate";
 
 export function useTransactions(
   pairId: string | undefined,
@@ -35,7 +36,7 @@ export function useTransactions(
         const filtered = includeArchived
           ? items
           : items.filter((t) => t.archived !== true);
-        setTransactions(filtered);
+        setTransactions(sortTransactionsByEventDate(filtered));
         setLoading(false);
       },
       (error) => {

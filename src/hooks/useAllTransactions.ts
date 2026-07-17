@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Pair, Transaction } from "@/types";
+import { sortTransactionsByEventDate } from "@/utils/transactionDate";
 
 export interface PairTransaction extends Transaction {
   pairId: string;
@@ -52,13 +53,7 @@ export function useAllTransactions(
         if (pendingCount > 0) pendingCount--;
 
         if (pendingCount === 0) {
-          const all = Array.from(txMap.values())
-            .flat()
-            .sort((a, b) => {
-              const ta = a.createdAt?.toMillis?.() ?? 0;
-              const tb = b.createdAt?.toMillis?.() ?? 0;
-              return tb - ta;
-            });
+          const all = sortTransactionsByEventDate(Array.from(txMap.values()).flat());
           setTransactions(all);
           setLoading(false);
         }

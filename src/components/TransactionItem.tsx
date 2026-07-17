@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Transaction, Pair } from "@/types";
 import { formatAmount } from "@/utils/currency";
 import { obligationText, partnerNameFor } from "@/utils/transactionPresentation";
+import { transactionEventDate } from "@/utils/transactionDate";
 import DisputeWithCounterForm from "@/components/DisputeWithCounterForm";
 
 interface TransactionItemProps {
@@ -57,7 +58,7 @@ export default function TransactionItem({
     denied: "bg-red-100 text-red-700",
   };
 
-  const displayDate = (tx.date ?? tx.createdAt)?.toDate?.();
+  const displayDate = transactionEventDate(tx);
   const date = displayDate
     ? displayDate.toLocaleDateString("en-US", {
         month: "short",
@@ -109,6 +110,7 @@ export default function TransactionItem({
 
   return (
     <div
+      data-testid={`transaction-item-${tx.id}`}
       className={`card ${tx.status === "disputed" ? "border-red-200" : tx.status === "pending" && !isCreator ? "border-blue-200 bg-blue-50/30" : ""} ${tx.archived ? "opacity-60" : ""}`}
     >
       <div className="flex items-start justify-between gap-3">

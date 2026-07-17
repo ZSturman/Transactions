@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -21,26 +21,11 @@ interface BalanceTrendChartProps {
 
 interface BalanceChartPoint {
   date: string;
-  tooltipDate: string;
   value: number;
-  change?: number;
-  reason: string;
-}
-
-function formatChange(value: number, symbol: string) {
-  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
-  return `${sign}${symbol}${Math.abs(value).toFixed(2)}`;
-}
-
-function formatReason(reason: string) {
-  return reason
-    .replace(/[-_]/g, " ")
-    .replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 export default function BalanceTrendChart({ snapshots, pair, mini = false }: BalanceTrendChartProps) {
   const { user } = useAuth();
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const data = useMemo<BalanceChartPoint[]>(() => {
     if (!user) return [];
@@ -48,34 +33,14 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
 
     return [...snapshots]
       .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0))
-      .map((s, index, orderedSnapshots) => {
-      // Positive = user is owed money; negative = user owes money
-      const value = userIdx === 0 ? s.balance : -s.balance;
-      const date = s.timestamp?.toDate?.();
-      const previousSnapshot = orderedSnapshots[index - 1];
-      const previousValue = previousSnapshot
-        ? userIdx === 0
-          ? previousSnapshot.balance
-          : -previousSnapshot.balance
-        : undefined;
-
-      return {
-        date: date
-          ? date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-          : "",
-        tooltipDate: date
-          ? date.toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })
-          : "Unknown date",
-        value,
-        change: previousValue === undefined ? undefined : value - previousValue,
-        reason: s.reason,
-      };
+      .map((snapshot) => {
+        const date = snapshot.timestamp?.toDate?.();
+        return {
+          date: date
+            ? date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+            : "",
+          value: userIdx === 0 ? snapshot.balance : -snapshot.balance,
+        };
       });
   }, [snapshots, pair, user]);
 
@@ -91,11 +56,10 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
   }
 
   const height = mini ? 48 : 180;
-
   const latestValue = data[data.length - 1].value;
   const isSettled = latestValue === 0;
-  const positive = data.every((d) => d.value >= 0);
-  const negative = data.every((d) => d.value <= 0);
+  const positive = data.every((point) => point.value >= 0);
+  const negative = data.every((point) => point.value <= 0);
   const strokeColor = isSettled
     ? "#9ca3af"
     : negative
@@ -110,7 +74,6 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
     : positive
     ? "#dcfce7"
     : "#dbeafe";
-  const selectedPoint = selectedIndex === null ? undefined : data[selectedIndex];
 
   return (
     <div data-testid={mini ? undefined : "balance-history-chart"}>
@@ -131,7 +94,7 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v) => `${symbol}${Math.abs(v).toFixed(0)}`}
+              tickFormatter={(value) => `${symbol}${Math.abs(value).toFixed(0)}`}
             />
           )}
           <Area
@@ -140,70 +103,12 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
             stroke={strokeColor}
             fill={fillColor}
             strokeWidth={mini ? 1.5 : 2}
-            dot={
-              mini
-                ? false
-                : (props) => {
-                    const { cx, cy, index } = props;
-                    if (typeof cx !== "number" || typeof cy !== "number" || typeof index !== "number") {
-                      return null;
-                    }
-
-                    const isSelected = index === selectedIndex;
-                    return (
-                      <g
-                        data-testid={`balance-history-point-${index}`}
-                        className="cursor-pointer"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedIndex(index);
-                        }}
-                      >
-                        <circle cx={cx} cy={cy} r={14} fill="transparent" />
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={isSelected ? 5 : 3}
-                          fill="white"
-                          stroke={strokeColor}
-                          strokeWidth={isSelected ? 3 : 2}
-                          pointerEvents="none"
-                        />
-                      </g>
-                    );
-                  }
-            }
+            dot={false}
+            activeDot={false}
             isAnimationActive={!mini}
           />
         </AreaChart>
       </ResponsiveContainer>
-      {!mini && (
-        <div
-          data-testid="balance-history-details"
-          aria-live="polite"
-          className="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600"
-        >
-          {selectedPoint ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-gray-700">{selectedPoint.tooltipDate}</p>
-              <p>
-                Balance: {symbol}{Math.abs(selectedPoint.value).toFixed(2)}{" "}
-                {selectedPoint.value === 0
-                  ? "(settled)"
-                  : selectedPoint.value > 0
-                  ? "(owed to you)"
-                  : "(you owe)"}
-              </p>
-              {selectedPoint.change !== undefined && (
-                <p>Change: {formatChange(selectedPoint.change, symbol)}</p>
-              )}
-              {selectedPoint.reason && <p className="text-gray-400">{formatReason(selectedPoint.reason)}</p>}
-            </div>
-          ) : (
-            "Tap or click a point to see the balance and change on that date."
-          )}
-        </div>
-      )}
     </div>
   );
 }

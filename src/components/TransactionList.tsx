@@ -2,6 +2,7 @@
 
 import { Transaction, Pair } from "@/types";
 import TransactionItem from "@/components/TransactionItem";
+import { sortTransactionsByEventDate } from "@/utils/transactionDate";
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -27,7 +28,7 @@ export default function TransactionList({ transactions, pair, onApprove, onDispu
 
   return (
     <div className="space-y-2">
-      {transactions.map((tx) => (
+      {sortTransactionsByEventDate(transactions).map((tx) => (
         <TransactionItem
           key={tx.id}
           transaction={tx}

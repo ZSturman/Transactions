@@ -13,7 +13,7 @@ test.describe("Balance history on mobile", () => {
     await clearAllEmulatorData();
   });
 
-  test("selecting a history point shows that date's balance and change", async ({ page }) => {
+  test("uses clean trend lines without a marker for every transaction", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 800 });
 
     const [alice, bob] = await Promise.all([
@@ -63,31 +63,14 @@ test.describe("Balance history on mobile", () => {
 
     const chart = page.getByTestId("balance-history-chart");
     await expect(chart).toBeVisible();
-    await expect(page.getByTestId("balance-history-details")).toContainText(
-      "Tap or click a point"
-    );
+    await expect(chart.locator('[data-testid^="balance-history-point-"]')).toHaveCount(0);
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
       .toBe(true);
 
-    const selectedPoint = page.getByTestId("balance-history-point-2");
-    await expect(selectedPoint).toHaveCount(1);
-    await selectedPoint.click();
-
-    const details = page.getByTestId("balance-history-details");
-    await expect(details).toContainText("Balance: $35.00 (you owe)");
-    await expect(details).toContainText("Change: +$5.00");
-    await expect(details).toContainText("Counter proposal accepted");
-
     await page.goto("/");
     const netChart = page.getByTestId("net-balance-chart");
     await expect(netChart).toBeVisible();
-    const netSelectedPoint = page.getByTestId("net-balance-point-2");
-    await expect(netSelectedPoint).toHaveCount(1);
-    await netSelectedPoint.click();
-
-    const netDetails = page.getByTestId("net-balance-details");
-    await expect(netDetails).toContainText("Net balance: $35.00 (you owe)");
-    await expect(netDetails).toContainText("Change: +$5.00");
+    await expect(netChart.locator('[data-testid^="net-balance-point-"]')).toHaveCount(0);
   });
 });

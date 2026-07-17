@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -36,11 +36,7 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 interface NetBalanceChartPoint {
   date: string;
-  tooltipDate: string;
   value: number;
-  change?: number;
-  reason?: string;
-  isOpeningBalance?: boolean;
 }
 
 function periodStartMs(period: Period): number {
@@ -55,17 +51,6 @@ function periodStartMs(period: Period): number {
   return now - days[period] * 24 * 60 * 60 * 1000;
 }
 
-function formatChange(value: number, symbol: string) {
-  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
-  return `${sign}${symbol}${Math.abs(value).toFixed(2)}`;
-}
-
-function formatReason(reason: string) {
-  return reason
-    .replace(/[-_]/g, " ")
-    .replace(/^\w/, (letter) => letter.toUpperCase());
-}
-
 export default function NetBalanceTrendChart({
   snapshots,
   pairs,
@@ -75,7 +60,6 @@ export default function NetBalanceTrendChart({
 }: NetBalanceTrendChartProps) {
   const { user } = useAuth();
   const symbol = getCurrencySymbol(currency);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const chartData = useMemo<NetBalanceChartPoint[]>(() => {
     if (!user || snapshots.length === 0) return [];
@@ -96,7 +80,7 @@ export default function NetBalanceTrendChart({
 
     // Build step-function: track latest balance per pair, emit net at each event
     const latestByPair = new Map<string, number>(); // pairId → user-perspective balance
-    const points: { ts: number; net: number; reason: string }[] = [];
+    const points: { ts: number; net: number }[] = [];
 
     for (const snap of sorted) {
       const mult = pairMultiplier.get(snap.pairId) ?? 1;
@@ -107,15 +91,14 @@ export default function NetBalanceTrendChart({
       points.push({
         ts: snap.timestamp?.toMillis?.() ?? 0,
         net,
-        reason: snap.reason,
       });
     }
 
     if (points.length === 0) return [];
 
     // Find the last point before cutoff to anchor the start
-    const periodPoints: { ts: number; net: number; reason: string }[] = [];
-    let anchor: { ts: number; net: number; reason: string } | null = null;
+    const periodPoints: { ts: number; net: number }[] = [];
+    let anchor: { ts: number; net: number } | null = null;
     for (const p of points) {
       if (p.ts < cutoff) {
         anchor = p;
@@ -127,22 +110,18 @@ export default function NetBalanceTrendChart({
     const displayPoints: Array<{
       ts: number;
       net: number;
-      reason: string;
-      isOpeningBalance?: boolean;
     }> = anchor
-      ? [{ ts: cutoff, net: anchor.net, reason: "Opening balance", isOpeningBalance: true }, ...periodPoints]
+      ? [{ ts: cutoff, net: anchor.net }, ...periodPoints]
       : periodPoints;
 
     if (displayPoints.length === 0 && anchor) {
       displayPoints.push({
         ts: cutoff,
         net: anchor.net,
-        reason: "Opening balance",
-        isOpeningBalance: true,
       });
     }
 
-    return displayPoints.map((p, index) => {
+    return displayPoints.map((p) => {
       const date = new Date(p.ts);
       return {
         date: date.toLocaleDateString("en-US", {
@@ -150,18 +129,7 @@ export default function NetBalanceTrendChart({
           day: "numeric",
           ...(period === "1Y" || period === "all" ? { year: "2-digit" } : {}),
         }),
-        tooltipDate: date.toLocaleString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        }),
         value: p.net,
-        change:
-          p.isOpeningBalance || index === 0 ? undefined : p.net - displayPoints[index - 1].net,
-        reason: p.reason,
-        isOpeningBalance: p.isOpeningBalance,
       };
     });
   }, [snapshots, pairs, user, period]);
@@ -189,8 +157,6 @@ export default function NetBalanceTrendChart({
     ? "#16a34a"
     : "#3b82f6";
   const hasZeroCrossing = !allPositive && !allNegative;
-  const selectedPoint = selectedIndex === null ? undefined : chartData[selectedIndex];
-
   return (
     <div className="space-y-3">
       <PeriodTabs period={period} onChange={onPeriodChange} />
@@ -226,68 +192,11 @@ export default function NetBalanceTrendChart({
               stroke={strokeColor}
               fill="url(#netGrad)"
               strokeWidth={2}
-              dot={(props) => {
-                const { cx, cy, index } = props;
-                if (typeof cx !== "number" || typeof cy !== "number" || typeof index !== "number") {
-                  return null;
-                }
-
-                const isSelected = index === selectedIndex;
-                return (
-                  <g
-                    data-testid={`net-balance-point-${index}`}
-                    className="cursor-pointer"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSelectedIndex(index);
-                    }}
-                  >
-                    <circle cx={cx} cy={cy} r={14} fill="transparent" />
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={isSelected ? 5 : 3}
-                      fill="white"
-                      stroke={strokeColor}
-                      strokeWidth={isSelected ? 3 : 2}
-                      pointerEvents="none"
-                    />
-                  </g>
-                );
-              }}
+              dot={false}
               activeDot={false}
             />
           </AreaChart>
         </ResponsiveContainer>
-        <div
-          data-testid="net-balance-details"
-          aria-live="polite"
-          className="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600"
-        >
-          {selectedPoint ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-gray-700">{selectedPoint.tooltipDate}</p>
-              <p>
-                Net balance: {symbol}{Math.abs(selectedPoint.value).toFixed(2)}{" "}
-                {selectedPoint.value === 0
-                  ? "(settled)"
-                  : selectedPoint.value > 0
-                  ? "(owed to you)"
-                  : "(you owe)"}
-              </p>
-              {selectedPoint.change !== undefined && (
-                <p>Change: {formatChange(selectedPoint.change, symbol)}</p>
-              )}
-              {selectedPoint.isOpeningBalance ? (
-                <p className="text-gray-400">Opening balance for this period</p>
-              ) : selectedPoint.reason ? (
-                <p className="text-gray-400">{formatReason(selectedPoint.reason)}</p>
-              ) : null}
-            </div>
-          ) : (
-            "Tap or click a point to see the net balance and change on that date."
-          )}
-        </div>
       </div>
     </div>
   );

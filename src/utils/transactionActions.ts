@@ -8,22 +8,28 @@ import {
   writeBatch,
   deleteField,
   deleteDoc,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Pair, Transaction } from "@/types";
 import { sendResolvedEmail, sendTransactionEmail } from "@/lib/email";
+import { transactionEventDate } from "@/utils/transactionDate";
 
 async function writeBalanceSnapshot(
   pairId: string,
   newBalance: number,
   reason: string,
-  triggeredBy: string
+  triggeredBy: string,
+  transaction?: Transaction
 ) {
+  const effectiveAt = transaction ? transactionEventDate(transaction) : undefined;
   await addDoc(collection(db, "pairs", pairId, "balanceSnapshots"), {
     balance: newBalance,
     timestamp: serverTimestamp(),
     triggeredBy,
     reason,
+    ...(effectiveAt && { effectiveAt: Timestamp.fromDate(effectiveAt) }),
+    ...(transaction && { transactionId: transaction.id }),
   });
 }
 
@@ -86,7 +92,8 @@ export async function approveTransaction(
     pair.id,
     newBalance,
     tx.type === "settlement" ? "settlement approved" : "transaction approved",
-    userId
+    userId,
+    tx
   );
 
   await sendResolvedEmail(pair.id, tx.id);
@@ -257,7 +264,7 @@ export async function acceptCounter(
     );
   });
 
-  await writeBalanceSnapshot(pair.id, newBalance, "counter-proposal accepted", userId);
+  await writeBalanceSnapshot(pair.id, newBalance, "counter-proposal accepted", userId, tx);
 }
 
 export async function rejectCounter(pair: Pair, tx: Transaction): Promise<void> {

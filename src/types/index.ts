@@ -83,7 +83,9 @@ export interface Transaction {
 export interface BalanceSnapshot {
   id: string;
   balance: number;                    // from perspective of users[0]
-  timestamp: Timestamp;
+  timestamp: Timestamp;               // when the balance was approved in the app
+  effectiveAt?: Timestamp;            // date the underlying transaction occurred
+  transactionId?: string;             // source transaction when applicable
   triggeredBy: string;                // uid of user who triggered the change
   reason: string;                     // e.g. "approved", "settled", "forgiven"
 }

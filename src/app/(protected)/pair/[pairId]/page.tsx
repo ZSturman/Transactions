@@ -9,12 +9,12 @@ import {
   serverTimestamp,
   addDoc,
   collection,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePairs } from "@/hooks/usePairs";
 import { useTransactions } from "@/hooks/useTransactions";
-import { useBalanceSnapshots } from "@/hooks/useBalanceSnapshots";
 import { Transaction } from "@/types";
 import { exportPairToCsv, exportPairToJson } from "@/utils/export";
 import {
@@ -51,7 +51,6 @@ export default function PairDetailPage() {
   const { pairs, loading: pairsLoading } = usePairs();
   const [showArchived, setShowArchived] = useState(false);
   const { transactions, loading: txLoading } = useTransactions(pairId, { includeArchived: showArchived });
-  const { snapshots } = useBalanceSnapshots(pairId);
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "disputed">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
@@ -157,10 +156,12 @@ export default function PairDetailPage() {
   async function handleForgive(amount: number, reason: string) {
     try {
       const newPairBalance = idx === 0 ? pair!.balance - amount : pair!.balance + amount;
+      let forgivenessTransactionId = "";
 
       await runTransaction(db, async (transaction) => {
         const pairRef = doc(db, "pairs", pair!.id);
         const txRef = doc(collection(db, "pairs", pair!.id, "transactions"));
+        forgivenessTransactionId = txRef.id;
 
         transaction.set(txRef, {
           pairId: pair!.id,
@@ -179,6 +180,8 @@ export default function PairDetailPage() {
       await addDoc(collection(db, "pairs", pair!.id, "balanceSnapshots"), {
         balance: newPairBalance,
         timestamp: serverTimestamp(),
+        effectiveAt: Timestamp.now(),
+        transactionId: forgivenessTransactionId,
         triggeredBy: user!.uid,
         reason: `forgiven: ${reason || "no reason"}`,
       });
@@ -286,9 +289,9 @@ export default function PairDetailPage() {
       {/* Balance summary */}
       <div className="card">
         <BalanceSummary pair={pair} />
-        {snapshots.length > 1 && (
+        {transactions.some((transaction) => transaction.status === "approved") && (
           <div className="mt-4">
-            <BalanceTrendChart snapshots={snapshots} pair={pair} />
+            <BalanceTrendChart transactions={transactions} pair={pair} />
           </div>
         )}
       </div>

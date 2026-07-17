@@ -5,7 +5,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePairs } from "@/hooks/usePairs";
 import { useInvites } from "@/hooks/useInvites";
 import { useAllTransactions } from "@/hooks/useAllTransactions";
-import { useAllBalanceSnapshots } from "@/hooks/useAllBalanceSnapshots";
 import { formatAmount } from "@/utils/currency";
 import PairCard from "@/components/PairCard";
 import TransactionModal from "@/components/TransactionModal";
@@ -50,7 +49,6 @@ export default function DashboardPage() {
   // Include pending invitation pairs for queued-request counts. Active pairs
   // are always displayed, even when legacy records still carry hidden flags.
   const { transactions: rawTransactions } = useAllTransactions(pairs, { includePending: true });
-  const { snapshots: rawSnapshots } = useAllBalanceSnapshots(activePairs);
 
   const displayPairs = activePairs;
   const displayPairIds = useMemo(
@@ -60,10 +58,6 @@ export default function DashboardPage() {
   const transactions = useMemo(
     () => rawTransactions.filter((tx) => displayPairIds.has(tx.pairId)),
     [rawTransactions, displayPairIds]
-  );
-  const snapshots = useMemo(
-    () => rawSnapshots.filter((s) => displayPairIds.has(s.pairId)),
-    [rawSnapshots, displayPairIds]
   );
 
   // ── Pending transactions that need the current user's action ──
@@ -299,7 +293,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <NetBalanceTrendChart
-              snapshots={snapshots}
+              transactions={transactions}
               pairs={displayPairs}
               currency={currency}
               period={period}

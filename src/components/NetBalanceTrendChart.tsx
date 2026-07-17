@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -9,16 +9,23 @@ import {
   CartesianGrid,
   ResponsiveContainer,
   ReferenceLine,
+  Tooltip,
 } from "recharts";
 import { Pair } from "@/types";
-import { PairBalanceSnapshot } from "@/hooks/useAllBalanceSnapshots";
+import { PairTransaction } from "@/hooks/useAllTransactions";
+import {
+  BalanceHistoryPoint,
+  buildNetBalanceHistory,
+  historyForPeriod,
+} from "@/utils/balanceHistory";
 import { getCurrencySymbol } from "@/utils/currency";
 import { useAuth } from "@/contexts/AuthContext";
+import { BalanceHistoryDetails, BalanceHistoryTooltip } from "@/components/BalanceChartDetails";
 
 type Period = "7D" | "30D" | "90D" | "1Y" | "all";
 
 interface NetBalanceTrendChartProps {
-  snapshots: PairBalanceSnapshot[];
+  transactions: PairTransaction[];
   pairs: Pair[];
   currency: string;
   period: Period;
@@ -34,25 +41,28 @@ const PERIOD_LABELS: Record<Period, string> = {
   all: "All",
 };
 
-interface NetBalanceChartPoint {
-  date: string;
-  value: number;
-}
-
 function periodStartMs(period: Period): number {
   if (period === "all") return 0;
-  const now = Date.now();
   const days: Record<Exclude<Period, "all">, number> = {
     "7D": 7,
     "30D": 30,
     "90D": 90,
     "1Y": 365,
   };
-  return now - days[period] * 24 * 60 * 60 * 1000;
+  return Date.now() - days[period] * 24 * 60 * 60 * 1000;
+}
+
+function selectedChartIndex(
+  activeTooltipIndex: number | string | null | undefined,
+  dataLength: number
+): number | null {
+  if (activeTooltipIndex === null || activeTooltipIndex === undefined) return null;
+  const index = Number(activeTooltipIndex);
+  return Number.isInteger(index) && index >= 0 && index < dataLength ? index : null;
 }
 
 export default function NetBalanceTrendChart({
-  snapshots,
+  transactions,
   pairs,
   currency,
   period,
@@ -60,79 +70,16 @@ export default function NetBalanceTrendChart({
 }: NetBalanceTrendChartProps) {
   const { user } = useAuth();
   const symbol = getCurrencySymbol(currency);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
-  const chartData = useMemo<NetBalanceChartPoint[]>(() => {
-    if (!user || snapshots.length === 0) return [];
-
-    // Map pairId → user-perspective multiplier (1 if users[0], -1 if users[1])
-    const pairMultiplier = new Map<string, number>();
-    for (const p of pairs) {
-      const idx = p.users.indexOf(user.uid);
-      pairMultiplier.set(p.id, idx === 0 ? 1 : -1);
-    }
-
-    // Sort all snapshots by timestamp ascending
-    const sorted = [...snapshots].sort(
-      (a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0)
-    );
-
-    const cutoff = periodStartMs(period);
-
-    // Build step-function: track latest balance per pair, emit net at each event
-    const latestByPair = new Map<string, number>(); // pairId → user-perspective balance
-    const points: { ts: number; net: number }[] = [];
-
-    for (const snap of sorted) {
-      const mult = pairMultiplier.get(snap.pairId) ?? 1;
-      const userBalance = snap.balance * mult;
-      latestByPair.set(snap.pairId, userBalance);
-
-      const net = Array.from(latestByPair.values()).reduce((s, v) => s + v, 0);
-      points.push({
-        ts: snap.timestamp?.toMillis?.() ?? 0,
-        net,
-      });
-    }
-
-    if (points.length === 0) return [];
-
-    // Find the last point before cutoff to anchor the start
-    const periodPoints: { ts: number; net: number }[] = [];
-    let anchor: { ts: number; net: number } | null = null;
-    for (const p of points) {
-      if (p.ts < cutoff) {
-        anchor = p;
-      } else {
-        periodPoints.push(p);
-      }
-    }
-
-    const displayPoints: Array<{
-      ts: number;
-      net: number;
-    }> = anchor
-      ? [{ ts: cutoff, net: anchor.net }, ...periodPoints]
-      : periodPoints;
-
-    if (displayPoints.length === 0 && anchor) {
-      displayPoints.push({
-        ts: cutoff,
-        net: anchor.net,
-      });
-    }
-
-    return displayPoints.map((p) => {
-      const date = new Date(p.ts);
-      return {
-        date: date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          ...(period === "1Y" || period === "all" ? { year: "2-digit" } : {}),
-        }),
-        value: p.net,
-      };
-    });
-  }, [snapshots, pairs, user, period]);
+  const history = useMemo<BalanceHistoryPoint[]>(
+    () => (user ? buildNetBalanceHistory(transactions, pairs, user.uid) : []),
+    [transactions, pairs, user]
+  );
+  const chartData = useMemo(
+    () => historyForPeriod(history, periodStartMs(period)),
+    [history, period]
+  );
 
   if (chartData.length === 0) {
     return (
@@ -147,8 +94,8 @@ export default function NetBalanceTrendChart({
 
   const latestValue = chartData[chartData.length - 1].value;
   const isSettled = latestValue === 0;
-  const allPositive = chartData.every((d) => d.value >= 0);
-  const allNegative = chartData.every((d) => d.value <= 0);
+  const allPositive = chartData.every((point) => point.value >= 0);
+  const allNegative = chartData.every((point) => point.value <= 0);
   const strokeColor = isSettled
     ? "#9ca3af"
     : allNegative
@@ -157,12 +104,23 @@ export default function NetBalanceTrendChart({
     ? "#16a34a"
     : "#3b82f6";
   const hasZeroCrossing = !allPositive && !allNegative;
+  const selectedPoint = selectedDayKey
+    ? chartData.find((point) => point.dayKey === selectedDayKey)
+    : undefined;
+
   return (
     <div className="space-y-3">
       <PeriodTabs period={period} onChange={onPeriodChange} />
       <div data-testid="net-balance-chart">
         <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+          <AreaChart
+            data={chartData}
+            margin={{ top: 8, right: 8, left: -8, bottom: 0 }}
+            onClick={({ activeTooltipIndex }) => {
+              const index = selectedChartIndex(activeTooltipIndex, chartData.length);
+              if (index !== null) setSelectedDayKey(chartData[index]!.dayKey);
+            }}
+          >
             <defs>
               <linearGradient id="netGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={strokeColor} stopOpacity={0.18} />
@@ -171,7 +129,7 @@ export default function NetBalanceTrendChart({
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis
-              dataKey="date"
+              dataKey="axisLabel"
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
@@ -181,11 +139,23 @@ export default function NetBalanceTrendChart({
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v) => `${symbol}${Math.abs(v).toFixed(0)}`}
+              tickFormatter={(value) => `${symbol}${Math.abs(value).toFixed(0)}`}
             />
             {hasZeroCrossing && (
               <ReferenceLine y={0} stroke="#d1d5db" strokeDasharray="4 4" />
             )}
+            <Tooltip
+              cursor={{ stroke: "#d1d5db", strokeDasharray: "4 4" }}
+              content={(props) => (
+                <BalanceHistoryTooltip
+                  active={props.active}
+                  payload={props.payload as unknown as ReadonlyArray<{ payload?: BalanceHistoryPoint }>}
+                  currency={currency}
+                  label="Net balance"
+                  testId="net-balance-tooltip"
+                />
+              )}
+            />
             <Area
               type="monotone"
               dataKey="value"
@@ -197,6 +167,12 @@ export default function NetBalanceTrendChart({
             />
           </AreaChart>
         </ResponsiveContainer>
+        <BalanceHistoryDetails
+          point={selectedPoint}
+          currency={currency}
+          label="Net balance"
+          testId="net-balance-details"
+        />
       </div>
     </div>
   );

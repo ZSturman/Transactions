@@ -266,11 +266,12 @@ export async function createTransaction(opts: {
   id: string;
   pairId: string;
   amount: number;
-  type: "payment" | "request" | "settlement";
+  type: "payment" | "request" | "adjustment" | "settlement" | "forgiveness";
   description?: string;
   createdBy: string;
   status?: "pending" | "approved" | "disputed";
   balanceAtRequest?: number;
+  archived?: boolean;
   /** User-facing event date, which may differ from when the record was created. */
   date?: Date;
   createdAt?: Date;
@@ -286,6 +287,7 @@ export async function createTransaction(opts: {
   };
   if (opts.balanceAtRequest !== undefined) fields.balanceAtRequest = int(opts.balanceAtRequest);
   if (opts.date) fields.date = ts(opts.date);
+  if (opts.archived !== undefined) fields.archived = bool(opts.archived);
   await patchDoc(`pairs/${opts.pairId}/transactions/${opts.id}`, fields);
 }
 
@@ -296,10 +298,11 @@ export async function createBalanceSnapshot(opts: {
   balance: number;
   triggeredBy: string;
   reason?: string;
+  timestamp?: Date;
 }): Promise<void> {
   await patchDoc(`pairs/${opts.pairId}/balanceSnapshots/${opts.id}`, {
     balance: int(opts.balance),
-    timestamp: ts(),
+    timestamp: ts(opts.timestamp),
     triggeredBy: str(opts.triggeredBy),
     reason: str(opts.reason ?? "test"),
   });

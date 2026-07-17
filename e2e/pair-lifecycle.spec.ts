@@ -109,7 +109,7 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
 
       await expect.poll(async () => (await pairData(pairId)).balance).toBe(0);
       await recipientPage.goto(`/pair/${pairId}`);
-      await expect(recipientPage.locator('path[stroke="#9ca3af"]').first()).toBeVisible({ timeout: 8_000 });
+      await expect(recipientPage.getByTestId("balance-history-chart")).toBeVisible({ timeout: 8_000 });
       expectNoFirebaseFailures(failures, recipientFailures);
     } finally {
       await recipientContext.close();
@@ -129,9 +129,17 @@ test.describe("Pair lifecycle and Firebase permissions", () => {
       ])
     );
     const snapshots = await listFirestoreDocuments(`pairs/${pairId}/balanceSnapshots`);
+    const settlement = transactions.find((transaction) => transaction.data.type === "settlement");
     expect(snapshots).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ data: expect.objectContaining({ balance: 0, reason: "settlement approved" }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            balance: 0,
+            reason: "settlement approved",
+            transactionId: settlement?.id,
+            effectiveAt: expect.any(String),
+          }),
+        }),
       ])
     );
   });

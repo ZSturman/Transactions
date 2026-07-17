@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { Pair } from "@/types";
 import { formatAmount } from "@/utils/currency";
-import { useBalanceSnapshots } from "@/hooks/useBalanceSnapshots";
+import { useTransactions } from "@/hooks/useTransactions";
 import BalanceTrendChart from "@/components/BalanceTrendChart";
 
 interface PairCardProps {
@@ -13,7 +13,7 @@ interface PairCardProps {
 
 export default function PairCard({ pair }: PairCardProps) {
   const { user } = useAuth();
-  const { snapshots } = useBalanceSnapshots(pair.id);
+  const { transactions } = useTransactions(pair.id);
 
   if (!user) return null;
 
@@ -62,12 +62,11 @@ export default function PairCard({ pair }: PairCardProps) {
           </p>
         </div>
       </div>
-      {snapshots.length > 1 && (
+      {transactions.some((transaction) => transaction.status === "approved") && (
         <div className="mt-2 -mx-1">
-          <BalanceTrendChart snapshots={snapshots} pair={pair} mini />
+          <BalanceTrendChart transactions={transactions} pair={pair} mini />
         </div>
       )}
     </Link>
   );
 }
-

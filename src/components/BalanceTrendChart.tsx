@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -8,41 +8,37 @@ import {
   YAxis,
   CartesianGrid,
   ResponsiveContainer,
+  Tooltip,
 } from "recharts";
-import { BalanceSnapshot, Pair } from "@/types";
+import { Pair, Transaction } from "@/types";
+import { buildPairBalanceHistory, BalanceHistoryPoint } from "@/utils/balanceHistory";
 import { getCurrencySymbol } from "@/utils/currency";
 import { useAuth } from "@/contexts/AuthContext";
+import { BalanceHistoryDetails, BalanceHistoryTooltip } from "@/components/BalanceChartDetails";
 
 interface BalanceTrendChartProps {
-  snapshots: BalanceSnapshot[];
+  transactions: Transaction[];
   pair: Pair;
   mini?: boolean;
 }
 
-interface BalanceChartPoint {
-  date: string;
-  value: number;
+function selectedChartIndex(
+  activeTooltipIndex: number | string | null | undefined,
+  dataLength: number
+): number | null {
+  if (activeTooltipIndex === null || activeTooltipIndex === undefined) return null;
+  const index = Number(activeTooltipIndex);
+  return Number.isInteger(index) && index >= 0 && index < dataLength ? index : null;
 }
 
-export default function BalanceTrendChart({ snapshots, pair, mini = false }: BalanceTrendChartProps) {
+export default function BalanceTrendChart({ transactions, pair, mini = false }: BalanceTrendChartProps) {
   const { user } = useAuth();
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
-  const data = useMemo<BalanceChartPoint[]>(() => {
-    if (!user) return [];
-    const userIdx = pair.users.indexOf(user.uid);
-
-    return [...snapshots]
-      .sort((a, b) => (a.timestamp?.toMillis?.() ?? 0) - (b.timestamp?.toMillis?.() ?? 0))
-      .map((snapshot) => {
-        const date = snapshot.timestamp?.toDate?.();
-        return {
-          date: date
-            ? date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-            : "",
-          value: userIdx === 0 ? snapshot.balance : -snapshot.balance,
-        };
-      });
-  }, [snapshots, pair, user]);
+  const data = useMemo<BalanceHistoryPoint[]>(
+    () => (user ? buildPairBalanceHistory(transactions, pair, user.uid) : []),
+    [transactions, pair, user]
+  );
 
   const symbol = getCurrencySymbol(pair.currency);
 
@@ -74,15 +70,25 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
     : positive
     ? "#dcfce7"
     : "#dbeafe";
+  const selectedPoint = selectedDayKey
+    ? data.find((point) => point.dayKey === selectedDayKey)
+    : undefined;
 
   return (
     <div data-testid={mini ? undefined : "balance-history-chart"}>
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 4, right: 4, left: mini ? -32 : -12, bottom: 0 }}>
+        <AreaChart
+          data={data}
+          margin={{ top: 4, right: 4, left: mini ? -32 : -12, bottom: 0 }}
+          onClick={({ activeTooltipIndex }) => {
+            const index = selectedChartIndex(activeTooltipIndex, data.length);
+            if (index !== null) setSelectedDayKey(data[index]!.dayKey);
+          }}
+        >
           {!mini && <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />}
           {!mini && (
             <XAxis
-              dataKey="date"
+              dataKey="axisLabel"
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
@@ -97,6 +103,20 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
               tickFormatter={(value) => `${symbol}${Math.abs(value).toFixed(0)}`}
             />
           )}
+          {!mini && (
+            <Tooltip
+              cursor={{ stroke: "#d1d5db", strokeDasharray: "4 4" }}
+              content={(props) => (
+                <BalanceHistoryTooltip
+                  active={props.active}
+                  payload={props.payload as unknown as ReadonlyArray<{ payload?: BalanceHistoryPoint }>}
+                  currency={pair.currency}
+                  label="Balance"
+                  testId="balance-history-tooltip"
+                />
+              )}
+            />
+          )}
           <Area
             type="monotone"
             dataKey="value"
@@ -109,6 +129,14 @@ export default function BalanceTrendChart({ snapshots, pair, mini = false }: Bal
           />
         </AreaChart>
       </ResponsiveContainer>
+      {!mini && (
+        <BalanceHistoryDetails
+          point={selectedPoint}
+          currency={pair.currency}
+          label="Balance"
+          testId="balance-history-details"
+        />
+      )}
     </div>
   );
 }
